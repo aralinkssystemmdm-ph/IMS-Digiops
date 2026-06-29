@@ -80,6 +80,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [schools, setSchools] = useState<SchoolItem[]>([]);
+  const [monitoringRecords, setMonitoringRecords] = useState<any[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isBundleDropdownOpen, setIsBundleDropdownOpen] = useState(false);
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
@@ -145,33 +146,85 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
     }
   }, []);
 
-  const fetchSchools = useCallback(async () => {
-    if (!isSupabaseConfigured) {
-      setSchools([
-        { name: 'Another Academy', is_buffer: false },
-        { name: 'BHNHS', is_buffer: true },
-        { name: 'NHS-Main', is_buffer: false }
-      ]);
-      return;
+  const fetchMonitoringRecords = useCallback(async () => {
+    let monitoringData: any[] = [];
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase
+          .from('school_monitoring')
+          .select('*');
+        if (!error && data) {
+          monitoringData = data.map((row: any) => ({
+            id: row.id,
+            customer_code: row.customer_code,
+            school_name: row.school_name,
+            program: row.program || 'OTHER',
+            sales_team: row.sales_team,
+            class_opening: row.class_opening,
+            target_deployment_date: row.target_deployment_date,
+            status: Number(row.status) || 1,
+            status_dates: typeof row.status_dates === 'string' 
+              ? JSON.parse(row.status_dates) 
+              : (row.status_dates || {}),
+            items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+          }));
+        }
+      } catch (e) {
+        console.warn('Could not fetch from Supabase school_monitoring table, falling back to localStorage:', e);
+      }
     }
     
-    try {
-      const { data, error } = await supabase
-        .from('schools')
-        .select('name, is_buffer, customer_code')
-        .order('name', { ascending: true });
-      
-      if (error) {
-        console.warn('Schools table error:', error.message);
-        return;
+    // Fall back to localStorage if empty or if Supabase query failed
+    if (monitoringData.length === 0) {
+      const local = localStorage.getItem('aralinks_school_monitoring');
+      if (local) {
+        try {
+          monitoringData = JSON.parse(local);
+        } catch (e) {
+          console.error('Failed to parse school_monitoring from localStorage:', e);
+        }
+      } else {
+        // Fallback mock records
+        const MOCK_MONITORING_RECORDS = [
+          {
+            id: '1',
+            school_name: 'Another Academy',
+            program: 'ACE',
+            customer_code: 'CUST-001',
+            items: [
+              { item_code: 'INVD0000336', item_name: 'Acer A15 Laptop Steel Gray', quantity: 15 },
+              { item_code: 'INVD0000344', item_name: 'Acer Laptop Charger Thin Pin', quantity: 15 }
+            ]
+          },
+          {
+            id: '2',
+            school_name: 'BHNHS',
+            program: 'NGS',
+            customer_code: 'CUST-002',
+            items: [
+              { item_code: 'INVD0000410', item_name: 'Smart Interactive Board (SIB) 65"', quantity: 2 }
+            ]
+          }
+        ];
+        monitoringData = MOCK_MONITORING_RECORDS;
       }
-      
-      if (data && Array.isArray(data)) {
-        setSchools(data as SchoolItem[]);
-      }
-    } catch (err) {
-      console.error('Failed to fetch schools:', err);
     }
+
+    setMonitoringRecords(monitoringData);
+
+    // Populate schools based on unique school names in monitoring records
+    const uniqueSchoolsMap = new Map<string, SchoolItem>();
+    monitoringData.forEach(record => {
+      if (record.school_name && !uniqueSchoolsMap.has(record.school_name)) {
+        uniqueSchoolsMap.set(record.school_name, {
+          name: record.school_name,
+          customer_code: record.customer_code,
+          is_buffer: false
+        });
+      }
+    });
+
+    setSchools(Array.from(uniqueSchoolsMap.values()));
   }, []);
 
   const fetchUserAccounts = useCallback(async () => {
@@ -297,7 +350,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
       setPendingBundle(null);
       setBundleQuantity('1');
       setSelectedBundleDropdown('');
-      fetchSchools();
+      fetchMonitoringRecords();
       fetchEquipment();
       fetchUserAccounts();
       setIsDropdownOpen(false);
@@ -363,9 +416,59 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
         }
       }
     }
-  }, [isOpen, initialData, fetchSchools, fetchEquipment, prefillItem, prefillCode, fetchNextControlNo]);
+  }, [isOpen, initialData, fetchMonitoringRecords, fetchEquipment, prefillItem, prefillCode, fetchNextControlNo]);
 
   if (!isOpen) return null;
+
+  const handleSchoolToggle = (schoolName: string) => {
+    const isSelected = selectedSchools.includes(schoolName);
+    let newSelected: string[];
+    
+    if (isSelected) {
+      newSelected = selectedSchools.filter(s => s !== schoolName);
+    } else {
+      newSelected = [...selectedSchools, schoolName];
+    }
+    
+    setSelectedSchools(newSelected);
+
+    if (!isSelected) {
+      // 1. Auto-populate Program
+      const matchingRec = monitoringRecords.find(r => r.school_name === schoolName);
+      if (matchingRec) {
+        if (matchingRec.program) {
+          setProgram(matchingRec.program);
+        }
+        
+        // 2. Auto-populate Item List based on monitoring record hardware list
+        if (matchingRec.items && Array.isArray(matchingRec.items) && matchingRec.items.length > 0) {
+          const nextItems = [...requestedItems];
+          matchingRec.items.forEach((item: any) => {
+            // Check if already in the requestedItems list
+            const existingIdx = nextItems.findIndex(ni => ni.item_code === item.item_code);
+            const equip = equipmentList.find(e => e.item_code === item.item_code);
+            const uom = equip && equip.uom ? equip.uom : 'UNIT';
+            const is_serialized = equip ? equip.is_serialized : false;
+
+            if (existingIdx > -1) {
+              const currentQty = parseInt(nextItems[existingIdx].qty) || 0;
+              nextItems[existingIdx].qty = String(currentQty + Number(item.quantity || 1));
+            } else {
+              nextItems.push({
+                id: Math.random().toString(36).substr(2, 9),
+                qty: String(item.quantity || 1),
+                uom: uom,
+                item: item.item_name || (equip ? equip.description : item.item_code),
+                item_code: item.item_code,
+                is_serialized: is_serialized
+              });
+            }
+          });
+          setRequestedItems(nextItems);
+        }
+      }
+    }
+  };
 
   const handleAddItem = () => {
     if (!program) {
@@ -1016,7 +1119,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
                           className="cursor-pointer hover:scale-110" 
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedSchools(prev => prev.filter(s => s !== school));
+                            handleSchoolToggle(school);
                           }}
                         />
                       </div>
@@ -1066,9 +1169,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
                               key={`${school.name}-${i}`}
                               onClick={(e) => { 
                                 e.stopPropagation();
-                                setSelectedSchools(prev => 
-                                  isSelected ? prev.filter(s => s !== school.name) : [...prev, school.name]
-                                );
+                                handleSchoolToggle(school.name);
                               }}
                               className="px-4 md:px-5 py-2.5 flex items-center justify-between group cursor-pointer transition-colors"
                               style={{
