@@ -147,14 +147,23 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
   }, []);
 
   const fetchMonitoringRecords = useCallback(async () => {
-    let monitoringData: any[] = [];
+    const smLocalStr = localStorage.getItem('aralinks_school_monitoring') || '[]';
+    let localMonitoring: any[] = [];
+    try {
+      localMonitoring = JSON.parse(smLocalStr);
+    } catch {
+      localMonitoring = [];
+    }
+
+    let monitoringData: any[] = [...localMonitoring];
+
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase
           .from('school_monitoring')
           .select('*');
         if (!error && data) {
-          monitoringData = data.map((row: any) => ({
+          const dbRecords = data.map((row: any) => ({
             id: row.id,
             customer_code: row.customer_code,
             school_name: row.school_name,
@@ -168,46 +177,19 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
               : (row.status_dates || {}),
             items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
           }));
+
+          monitoringData = dbRecords;
+          localStorage.setItem('aralinks_school_monitoring', JSON.stringify(dbRecords));
         }
       } catch (e) {
         console.warn('Could not fetch from Supabase school_monitoring table, falling back to localStorage:', e);
       }
     }
     
-    // Fall back to localStorage if empty or if Supabase query failed
+    // Fall back if absolutely empty and database was offline/empty
     if (monitoringData.length === 0) {
-      const local = localStorage.getItem('aralinks_school_monitoring');
-      if (local) {
-        try {
-          monitoringData = JSON.parse(local);
-        } catch (e) {
-          console.error('Failed to parse school_monitoring from localStorage:', e);
-        }
-      } else {
-        // Fallback mock records
-        const MOCK_MONITORING_RECORDS = [
-          {
-            id: '1',
-            school_name: 'Another Academy',
-            program: 'ACE',
-            customer_code: 'CUST-001',
-            items: [
-              { item_code: 'INVD0000336', item_name: 'Acer A15 Laptop Steel Gray', quantity: 15 },
-              { item_code: 'INVD0000344', item_name: 'Acer Laptop Charger Thin Pin', quantity: 15 }
-            ]
-          },
-          {
-            id: '2',
-            school_name: 'BHNHS',
-            program: 'NGS',
-            customer_code: 'CUST-002',
-            items: [
-              { item_code: 'INVD0000410', item_name: 'Smart Interactive Board (SIB) 65"', quantity: 2 }
-            ]
-          }
-        ];
-        monitoringData = MOCK_MONITORING_RECORDS;
-      }
+      monitoringData = [];
+      localStorage.setItem('aralinks_school_monitoring', JSON.stringify(monitoringData));
     }
 
     setMonitoringRecords(monitoringData);

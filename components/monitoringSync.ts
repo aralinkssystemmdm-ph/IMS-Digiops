@@ -68,13 +68,15 @@ export const syncSchoolMonitoringWithDRs = async () => {
       localMonitoring = [];
     }
 
+    monitoringRecords = [...localMonitoring];
+
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase
           .from('school_monitoring')
           .select('*');
         if (!error && data) {
-          monitoringRecords = data.map((row: any) => ({
+          const dbRecords = data.map((row: any) => ({
             id: row.id,
             customer_code: row.customer_code,
             school_name: row.school_name,
@@ -88,15 +90,13 @@ export const syncSchoolMonitoringWithDRs = async () => {
               : (row.status_dates || { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' }),
             items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
           }));
-        } else {
-          monitoringRecords = localMonitoring;
+
+          monitoringRecords = dbRecords;
+          localStorage.setItem('aralinks_school_monitoring', JSON.stringify(dbRecords));
         }
       } catch (err) {
         console.warn('Could not load school monitoring records from Supabase, falling back to local:', err);
-        monitoringRecords = localMonitoring;
       }
-    } else {
-      monitoringRecords = localMonitoring;
     }
 
     if (monitoringRecords.length === 0) return;
@@ -189,8 +189,9 @@ export const syncSchoolMonitoringWithDRs = async () => {
       if (isSupabaseConfigured && recordsToUpsert.length > 0) {
         try {
           for (const rec of recordsToUpsert) {
+            const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rec.id || '');
             const dbPayload = {
-              id: (rec.id && rec.id.startsWith('mock-')) ? undefined : rec.id,
+              id: isUUID ? rec.id : undefined,
               customer_code: rec.customer_code,
               school_name: rec.school_name,
               program: rec.program,

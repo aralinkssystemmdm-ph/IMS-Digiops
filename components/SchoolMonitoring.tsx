@@ -184,53 +184,7 @@ const renderCustomStepIcon = (step: number, isActive: boolean) => {
   }
 };
 
-const MOCK_MONITORING_RECORDS: SchoolMonitoringRecord[] = [
-  {
-    id: 'mock-1',
-    customer_code: 'SCH-2026-001',
-    school_name: 'St. Mary Polytechnic College',
-    program: 'ACE',
-    sales_team: 'Luzon Elite Sales Force',
-    class_opening: '2026-06-15',
-    target_deployment_date: '2026-06-08',
-    status: 5,
-    status_dates: {
-      1: '2026-05-02',
-      2: '2026-05-03',
-      3: '2026-05-04',
-      4: '2026-05-05',
-      5: '2026-05-06',
-      6: '',
-      7: ''
-    },
-    items: [
-      { item_code: 'INVD0000336', item_name: 'Acer A15 Laptop Steel Gray', quantity: 15 },
-      { item_code: 'INVD0000344', item_name: 'Acer Laptop Charger Thin Pin', quantity: 15 }
-    ]
-  },
-  {
-    id: 'mock-2',
-    customer_code: 'SCH-2026-042',
-    school_name: 'Quezon Science High School',
-    program: 'NGS',
-    sales_team: 'NCR Academic Alliance',
-    class_opening: '2026-07-20',
-    target_deployment_date: '2026-07-10',
-    status: 3,
-    status_dates: {
-      1: '2026-05-15',
-      2: '2026-05-18',
-      3: '2026-05-22',
-      4: '',
-      5: '',
-      6: '',
-      7: ''
-    },
-    items: [
-      { item_code: 'INVD0000410', item_name: 'Smart Interactive Board (SIB) 65"', quantity: 1 }
-    ]
-  }
-];
+const MOCK_MONITORING_RECORDS: SchoolMonitoringRecord[] = [];
 
 export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMode = false }) => {
   const { showSuccess, showError, showInfo } = useNotification();
@@ -288,14 +242,26 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     // Sync to backend if configured
     if (isSupabaseConfigured) {
       try {
-        await supabase
-          .from('school_monitoring')
-          .update({
-            status: modalStatus,
-            status_dates: finalDates,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', activeStatusEditRecord.id);
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeStatusEditRecord.id || '');
+        if (isUUID) {
+          await supabase
+            .from('school_monitoring')
+            .update({
+              status: modalStatus,
+              status_dates: finalDates,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', activeStatusEditRecord.id);
+        } else if (activeStatusEditRecord.customer_code) {
+          await supabase
+            .from('school_monitoring')
+            .update({
+              status: modalStatus,
+              status_dates: finalDates,
+              updated_at: new Date().toISOString()
+            })
+            .eq('customer_code', activeStatusEditRecord.customer_code);
+        }
       } catch (err) {
         console.warn('Could not sync status edit back to database:', err);
       }
@@ -649,11 +615,22 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
       setEquipment(fetchedEquipment);
 
       // 3. Fetch Monitoring records
-      // We check if Supabase has table 'school_monitoring'.
-      // If table query fails, fallback to localStorage.
-      let monitoringData: SchoolMonitoringRecord[] = [];
-      let successFromDB = false;
-      
+      // Load local storage first as the base/fallback
+      const localStr = localStorage.getItem('aralinks_school_monitoring');
+      let localRecords: SchoolMonitoringRecord[] = [];
+      if (localStr) {
+        try {
+          localRecords = JSON.parse(localStr);
+        } catch (err) {
+          console.error('Failed to parse local school_monitoring:', err);
+        }
+      } else {
+        localStorage.setItem('aralinks_school_monitoring', JSON.stringify(MOCK_MONITORING_RECORDS));
+        localRecords = MOCK_MONITORING_RECORDS;
+      }
+
+      let monitoringData: SchoolMonitoringRecord[] = [...localRecords];
+
       if (isSupabaseConfigured) {
         try {
           const { data, error } = await supabase
@@ -661,7 +638,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
             .select('*');
           
           if (!error && data) {
-            monitoringData = data.map((row: any) => ({
+            const dbRecords = data.map((row: any) => ({
               id: row.id,
               customer_code: row.customer_code,
               school_name: row.school_name,
@@ -675,21 +652,14 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                 : (row.status_dates || { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' }),
               items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
             }));
-            successFromDB = true;
+
+            monitoringData = dbRecords;
+            localStorage.setItem('aralinks_school_monitoring', JSON.stringify(dbRecords));
+          } else if (error) {
+            console.warn('Supabase fetch error, fallback to local records:', error.message);
           }
         } catch (e) {
           console.warn('Could not fetch from Supabase school_monitoring table, falling back to localStorage:', e);
-        }
-      }
-
-      if (!successFromDB) {
-        const local = localStorage.getItem('aralinks_school_monitoring');
-        if (local) {
-          monitoringData = JSON.parse(local);
-        } else {
-          // Sync seed mock data to localStorage
-          localStorage.setItem('aralinks_school_monitoring', JSON.stringify(MOCK_MONITORING_RECORDS));
-          monitoringData = MOCK_MONITORING_RECORDS;
         }
       }
 
@@ -787,9 +757,10 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
         localStorage.setItem('aralinks_school_monitoring', JSON.stringify(monitoringData));
         if (isSupabaseConfigured) {
           try {
+            const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
             for (const rec of monitoringData) {
               const payload = {
-                id: rec.id.startsWith('mock-') ? undefined : rec.id,
+                id: (rec.id && isUUID(rec.id)) ? rec.id : undefined,
                 customer_code: rec.customer_code,
                 school_name: rec.school_name,
                 program: rec.program,
@@ -823,39 +794,73 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
   }, [fetchInitialData]);
 
   // Persists monitoring data
-  const persistRecords = async (newRecords: SchoolMonitoringRecord[]) => {
-    setRecords(newRecords);
-    // Always save to localStorage
-    localStorage.setItem('aralinks_school_monitoring', JSON.stringify(newRecords));
+  const persistRecords = async (newRecords: SchoolMonitoringRecord[], singleRecordToUpsert?: SchoolMonitoringRecord | null, bypassDBSync: boolean = false) => {
+    let updatedLocalRecords = [...newRecords];
 
     // Try to save to Supabase
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && !bypassDBSync) {
       try {
-        // Drop existing or do custom upsert
-        // We write items/status_dates as JSON strings or direct jsonb if supported
-        for (const rec of newRecords) {
-          const payload = {
-            id: rec.id.startsWith('mock-') ? undefined : rec.id, // don't write mock ids directly if postgres expects UUID
+        const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
+        const recordsToUpsert = singleRecordToUpsert ? [singleRecordToUpsert] : newRecords;
+
+        for (const rec of recordsToUpsert) {
+          const payload: any = {
             customer_code: rec.customer_code,
             school_name: rec.school_name,
             program: rec.program,
             sales_team: rec.sales_team,
-            class_opening: rec.class_opening,
-            target_deployment_date: rec.target_deployment_date,
+            class_opening: rec.class_opening || null,
+            target_deployment_date: rec.target_deployment_date || null,
             status: rec.status,
             status_dates: rec.status_dates,
             items: rec.items,
             updated_at: new Date().toISOString()
           };
           
-          await supabase
+          if (rec.id && isUUID(rec.id)) {
+            payload.id = rec.id;
+          }
+          
+          const { data, error } = await supabase
             .from('school_monitoring')
-            .upsert(payload, { onConflict: 'customer_code' });
+            .upsert(payload, { onConflict: 'customer_code' })
+            .select();
+
+          if (!error && data && data[0]) {
+            const dbRow = data[0];
+            const syncedRec = {
+              id: dbRow.id,
+              customer_code: dbRow.customer_code,
+              school_name: dbRow.school_name,
+              program: dbRow.program || 'OTHER',
+              sales_team: dbRow.sales_team,
+              class_opening: dbRow.class_opening,
+              target_deployment_date: dbRow.target_deployment_date,
+              status: Number(dbRow.status) || 1,
+              status_dates: typeof dbRow.status_dates === 'string' 
+                ? JSON.parse(dbRow.status_dates) 
+                : (dbRow.status_dates || { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' }),
+              items: typeof dbRow.items === 'string' ? JSON.parse(dbRow.items) : (dbRow.items || [])
+            };
+            
+            // Update this record in updatedLocalRecords
+            updatedLocalRecords = updatedLocalRecords.map(r => 
+              r.customer_code === syncedRec.customer_code ? syncedRec : r
+            );
+          } else {
+            if (error) {
+              console.warn('Supabase row upsert error:', error.message);
+            }
+          }
         }
       } catch (err) {
         console.warn('Supabase DB Sync failed. Data is fully persisted locally first:', err);
       }
     }
+
+    setRecords(updatedLocalRecords);
+    // Always save to localStorage
+    localStorage.setItem('aralinks_school_monitoring', JSON.stringify(updatedLocalRecords));
   };
 
   // Handle selected school autofills
@@ -998,18 +1003,24 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
   const handleDeleteRecord = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (window.confirm('Are you sure you want to delete this monitoring record?')) {
+      const recordToDelete = records.find(r => r.id === id);
       const newRecs = records.filter(r => r.id !== id);
       
       // If synced DB is configured, attempt to delete
       if (isSupabaseConfigured) {
         try {
-          await supabase.from('school_monitoring').delete().eq('id', id);
+          const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+          if (isUUID) {
+            await supabase.from('school_monitoring').delete().eq('id', id);
+          } else if (recordToDelete && recordToDelete.customer_code) {
+            await supabase.from('school_monitoring').delete().eq('customer_code', recordToDelete.customer_code);
+          }
         } catch (err) {
-          console.warn(err);
+          console.warn('Failed to delete from Supabase:', err);
         }
       }
       
-      await persistRecords(newRecs);
+      await persistRecords(newRecs, null, true);
       if (selectedRecordId === id) setSelectedRecordId(null);
       showSuccess('Deleted Record', 'School monitoring record has been deleted');
     }
@@ -1023,6 +1034,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     }
     const today = getTodayString();
     
+    let changedRec: SchoolMonitoringRecord | null = null;
     const updated = records.map(r => {
       if (r.id === recordId) {
         const newDates = { ...r.status_dates };
@@ -1030,16 +1042,17 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
         if (!newDates[directStatus]) {
           newDates[directStatus] = today;
         }
-        return {
+        changedRec = {
           ...r,
           status: directStatus,
           status_dates: newDates
         };
+        return changedRec;
       }
       return r;
     });
 
-    await persistRecords(updated);
+    await persistRecords(updated, changedRec);
     showSuccess('Status Updated', `Successfully changed status step to ${directStatus}`);
   };
 
@@ -1057,6 +1070,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
 
     setSaving(true);
     try {
+      const finalCustomerCode = customerCode.trim() || ('CUST-' + selectedSchoolName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10));
       let updatedRecs: SchoolMonitoringRecord[] = [];
       const today = getTodayString();
       const finalStatusDates = { ...statusDates };
@@ -1066,15 +1080,17 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
         finalStatusDates[currentStatus] = today;
       }
 
+      let targetRecord: SchoolMonitoringRecord | null = null;
+
       if (editingRecord) {
         // Edit Mode
         updatedRecs = records.map(r => {
           if (r.id === editingRecord.id) {
-            return {
+            targetRecord = {
               ...r,
               school_name: selectedSchoolName,
               program: program,
-              customer_code: customerCode,
+              customer_code: finalCustomerCode,
               sales_team: salesTeam,
               class_opening: classOpening,
               target_deployment_date: targetDeploymentDate,
@@ -1083,6 +1099,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
               items: formItems,
               updated_at: new Date().toISOString()
             };
+            return targetRecord;
           }
           return r;
         });
@@ -1093,7 +1110,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
           id: `sm-${Date.now()}`,
           school_name: selectedSchoolName,
           program: program,
-          customer_code: customerCode,
+          customer_code: finalCustomerCode,
           sales_team: salesTeam,
           class_opening: classOpening,
           target_deployment_date: targetDeploymentDate,
@@ -1102,11 +1119,12 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
           items: formItems,
           created_at: new Date().toISOString()
         };
+        targetRecord = newRecord;
         updatedRecs = [newRecord, ...records];
         showSuccess('Record Created', 'Successfully added school to dispatch tracking');
       }
 
-      await persistRecords(updatedRecs);
+      await persistRecords(updatedRecs, targetRecord);
       setIsFormOpen(false);
     } catch (err) {
       console.error(err);
