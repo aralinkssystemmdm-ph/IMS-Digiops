@@ -237,6 +237,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
   const [records, setRecords] = useState<SchoolMonitoringRecord[]>([]);
   const [schools, setSchools] = useState<SchoolOption[]>([]);
   const [inventory, setInventory] = useState<InventoryOption[]>([]);
+  const [equipment, setEquipment] = useState<{ item_code: string; item_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -606,6 +607,47 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
       }
       setInventory(fetchedInventory);
 
+      // 2b. Fetch equipment list (not restricted to stock/inventory)
+      let fetchedEquipment: { item_code: string; item_name: string }[] = [];
+      if (isSupabaseConfigured) {
+        try {
+          const { data: equipData } = await supabase
+            .from('equipment')
+            .select('item_code, description')
+            .is('archived_at', null)
+            .order('description', { ascending: true });
+          if (equipData) {
+            fetchedEquipment = equipData.map((e: any) => ({
+              item_code: e.item_code,
+              item_name: e.description || e.item_code
+            }));
+          }
+        } catch (err) {
+          console.warn('Could not fetch from equipment table:', err);
+        }
+      }
+
+      // If no equipment was fetched or db connection is not configured, fall back to mock list combined with inventory
+      if (fetchedEquipment.length === 0) {
+        const mockList = [
+          { item_code: 'INVD0000336', item_name: 'Acer A15 Laptop Steel Gray' },
+          { item_code: 'INVD0000344', item_name: 'Acer Laptop Charger Thin Pin' },
+          { item_code: 'INVD0000410', item_name: 'Smart Interactive Board (SIB) 65"' },
+          { item_code: 'INVD0000500', item_name: 'Projector Mount Bracket White' },
+          { item_code: 'INVD0000600', item_name: 'HDMI High Speed Cable 15m' },
+          { item_code: 'INVD0000700', item_name: 'ACE Standard Kit Bag' }
+        ];
+        // Merge with inventory items just to be safe
+        const merged = [...mockList];
+        fetchedInventory.forEach(inv => {
+          if (!merged.some(m => m.item_code === inv.item_code)) {
+            merged.push({ item_code: inv.item_code, item_name: inv.item_name });
+          }
+        });
+        fetchedEquipment = merged;
+      }
+      setEquipment(fetchedEquipment);
+
       // 3. Fetch Monitoring records
       // We check if Supabase has table 'school_monitoring'.
       // If table query fails, fallback to localStorage.
@@ -833,21 +875,11 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
   // Add Item to creation list
   const addHardwareItem = () => {
     if (!selectedHardwareToAdd) return;
-    const invItem = inventory.find(i => i.item_code === selectedHardwareToAdd);
-    if (!invItem) return;
+    const eqItem = equipment.find(e => e.item_code === selectedHardwareToAdd);
+    const itemName = eqItem ? eqItem.item_name : selectedHardwareToAdd;
 
-    // Check if duplicate and validate available stock limit
+    // Check if duplicate
     const existingIdx = formItems.findIndex(item => item.item_code === selectedHardwareToAdd);
-    const existingQty = existingIdx > -1 ? formItems[existingIdx].quantity : 0;
-    const requestedTotal = existingQty + hardwareQtyToAdd;
-
-    if (requestedTotal > invItem.total_quantity) {
-      showError(
-        'Insufficient Stock',
-        `Quantity exceeds available stock. Available inventory for "${invItem.item_name}" is ${invItem.total_quantity} unit(s). You have already added ${existingQty} unit(s) to the list.`
-      );
-      return;
-    }
 
     if (existingIdx > -1) {
       const updated = [...formItems];
@@ -855,8 +887,8 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
       setFormItems(updated);
     } else {
       setFormItems([...formItems, {
-        item_code: invItem.item_code,
-        item_name: invItem.item_name,
+        item_code: selectedHardwareToAdd,
+        item_name: itemName,
         quantity: hardwareQtyToAdd
       }]);
     }
@@ -884,66 +916,38 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     return [];
   }, [bundlesForProgram, program]);
 
-  // Apply batch bundle dispatch with stock capping
+  // Apply batch bundle dispatch without stock restrictions
   const applyBundleBatch = (bundleName: string, multiplier: number = 1) => {
     const bToApply = activeBundles.find(b => b.name === bundleName);
     if (!bToApply) return;
 
     const updated = [...formItems];
-    let addedCount = 0;
-    let cappedCount = 0;
 
     bToApply.items.forEach(bItem => {
-      // Find inventory stock
-      const invItem = inventory.find(i => i.item_code === bItem.item_code);
-      if (invItem) {
-        const existingIdx = updated.findIndex(item => item.item_code === bItem.item_code);
-        const existingQty = existingIdx > -1 ? updated[existingIdx].quantity : 0;
-        
-        const maxStock = invItem.total_quantity;
-        const requestedToAdd = bItem.quantity * multiplier;
-        
-        const remainingToMax = maxStock - existingQty;
-        if (remainingToMax <= 0) {
-          cappedCount++;
-          return;
-        }
+      const eqItem = equipment.find(e => e.item_code === bItem.item_code);
+      const itemName = bItem.item_name || (eqItem ? eqItem.item_name : bItem.item_code);
+      const existingIdx = updated.findIndex(item => item.item_code === bItem.item_code);
+      
+      let requestedToAdd = bItem.quantity * multiplier;
+      
+      // Special formula for Brass Fastener: 1-10 = 1, 11-20 = 2, etc. (Math.max(1, Math.ceil(multiplier / 10)))
+      if (itemName.toUpperCase().includes('BRASS FASTENER')) {
+        requestedToAdd = Math.max(1, Math.ceil(multiplier / 10));
+      }
 
-        const actualQtyToAdd = Math.min(requestedToAdd, remainingToMax);
-        if (actualQtyToAdd < requestedToAdd) {
-          cappedCount++;
-        }
-
-        if (actualQtyToAdd > 0) {
-          if (existingIdx > -1) {
-            updated[existingIdx].quantity += actualQtyToAdd;
-          } else {
-            updated.push({
-              item_code: bItem.item_code,
-              item_name: bItem.item_name || invItem.item_name,
-              quantity: actualQtyToAdd
-            });
-          }
-          addedCount++;
-        }
+      if (existingIdx > -1) {
+        updated[existingIdx].quantity += requestedToAdd;
       } else {
-        console.warn(`Bundle item ${bItem.item_code} not found in inventory.`);
+        updated.push({
+          item_code: bItem.item_code,
+          item_name: itemName,
+          quantity: requestedToAdd
+        });
       }
     });
 
     setFormItems(updated);
-    if (addedCount > 0) {
-      if (cappedCount > 0) {
-        showInfo(
-          'Bundle Appended with Limits',
-          `Added items from "${bundleName}" (x${multiplier}) but some quantities were capped or skipped based on available stocks.`
-        );
-      } else {
-        showSuccess('Batch Bundle Loaded', `Successfully added all items from "${bundleName}" (x${multiplier}) to equipment list.`);
-      }
-    } else {
-      showError('Stock Unavailable', `Could not add items. All requested items are already at or above maximum stock limit.`);
-    }
+    showSuccess('Batch Bundle Loaded', `Successfully added all items from "${bundleName}" (x${multiplier}) to equipment list.`);
   };
 
   // Remove Item from creation list
@@ -1759,10 +1763,6 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
 
               {/* PAGE 2: DESIGNATED EQUIPMENT BLOCK */}
               {formStep === 2 && (() => {
-                const selectedInv = inventory.find(i => i.item_code === selectedHardwareToAdd);
-                const matchedExisting = formItems.find(item => item.item_code === selectedHardwareToAdd);
-                const matchedExistingQty = matchedExisting ? matchedExisting.quantity : 0;
-                const maxCanAdd = selectedInv ? Math.max(0, selectedInv.total_quantity - matchedExistingQty) : 9999;
                 return (
                   <div className="p-4 bg-slate-50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-850 rounded-2xl space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-150">
                     <div className="flex items-center justify-between">
@@ -1782,34 +1782,20 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                             </h4>
                           </div>
                           <p className="text-[10.5px] font-medium text-slate-500 max-w-sm sm:text-right leading-relaxed">
-                            Automate checklist creation. Capped dynamically at maximum available stocks.
+                            Automate checklist creation with predefined packages.
                           </p>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                           {activeBundles.map((b, bIdx) => {
-                            const hasNoStocks = b.items.every(item => {
-                              const invItem = inventory.find(i => i.item_code === item.item_code);
-                              return !invItem || invItem.total_quantity <= 0;
-                            });
-
                             return (
                               <div 
                                 key={`${b.name}-${bIdx}`} 
-                                className={`p-2.5 border rounded-lg flex items-center justify-between gap-3 shadow-xs transition-all ${
-                                  hasNoStocks 
-                                    ? 'bg-rose-50 dark:bg-rose-950/20 border-rose-500/50 text-rose-900 dark:text-rose-200' 
-                                    : 'bg-white dark:bg-slate-900 border-slate-150 dark:border-slate-800 hover:border-brand-orange/30'
-                                }`}
+                                className="p-2.5 border rounded-lg flex items-center justify-between gap-3 shadow-xs transition-all bg-white dark:bg-slate-900 border-slate-150 dark:border-slate-800 hover:border-brand-orange/30"
                               >
                                 <div className="min-w-0 flex-1">
-                                  <p className="text-[11.5px] font-extrabold truncate flex items-center gap-1.5">
+                                  <p className="text-[11.5px] font-extrabold truncate flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
                                     <span>{b.name}</span>
-                                    {hasNoStocks && (
-                                      <span className="text-[9.5px] font-bold px-1.5 py-0.2 bg-red-100 dark:bg-red-950/40 text-red-650 dark:text-red-400 rounded-sm uppercase tracking-wide">
-                                        No Stock
-                                      </span>
-                                    )}
                                   </p>
                                 </div>
                                 <button
@@ -1833,16 +1819,16 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                     {/* Select stock tool */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
                       <div className="sm:col-span-8 flex flex-col gap-1">
-                        <label className="text-[11px] font-black text-slate-400 uppercase tracking-wide">Available Inventory Items</label>
+                        <label className="text-[11px] font-black text-slate-400 uppercase tracking-wide">Equipment Catalog Items</label>
                         <select
                           value={selectedHardwareToAdd}
                           onChange={(e) => setSelectedHardwareToAdd(e.target.value)}
                           className="w-full border border-slate-200 dark:border-slate-850 bg-white dark:bg-slate-900 rounded-lg p-2 text-sm focus:outline-none text-slate-850 dark:text-white"
                         >
-                          <option value="">-- Choose item from stock --</option>
-                          {inventory.map(inv => (
-                            <option key={inv.item_code} value={inv.item_code}>
-                              {inv.item_name} ({inv.item_code}) -- Stock: {inv.total_quantity}
+                          <option value="">-- Choose equipment item --</option>
+                          {equipment.map(eq => (
+                            <option key={eq.item_code} value={eq.item_code}>
+                              {eq.item_name} ({eq.item_code})
                             </option>
                           ))}
                         </select>
@@ -1853,16 +1839,10 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                         <input
                           type="number"
                           min={1}
-                          max={maxCanAdd}
                           value={hardwareQtyToAdd}
                           onChange={(e) => {
                             const val = Number(e.target.value);
-                            if (selectedInv && val > maxCanAdd) {
-                              setHardwareQtyToAdd(maxCanAdd);
-                              showInfo('Capped Quantity', `Available addable quantity is capped at ${maxCanAdd} unit(s).`);
-                            } else {
-                              setHardwareQtyToAdd(Math.max(1, val));
-                            }
+                            setHardwareQtyToAdd(Math.max(1, val));
                           }}
                           className="w-full border border-slate-200 dark:border-slate-850 bg-white dark:bg-slate-900 rounded-lg p-2 text-sm text-center font-bold focus:outline-none text-slate-800 dark:text-white"
                         />
@@ -2056,15 +2036,19 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                     </span>
                     <div className="bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-150/50 dark:border-slate-800/50 max-h-40 overflow-y-auto divide-y divide-slate-150/30 dark:divide-slate-800/30">
                       {bToApply.items.map((bItem, idx) => {
-                        const invItem = inventory.find(i => i.item_code === bItem.item_code);
-                        const qty = bItem.quantity * mult;
-                        const available = invItem ? invItem.total_quantity : 0;
-                        const isCapped = qty > available;
+                        const eqItem = equipment.find(e => e.item_code === bItem.item_code);
+                        const itemName = bItem.item_name || (eqItem ? eqItem.item_name : bItem.item_code);
+                        
+                        let qty = bItem.quantity * mult;
+                        if (itemName.toUpperCase().includes('BRASS FASTENER')) {
+                          qty = Math.max(1, Math.ceil(mult / 10));
+                        }
+
                         return (
                           <div key={idx} className="p-3 flex items-center justify-between gap-3 text-xs">
                             <div className="min-w-0 flex-1">
                               <p className="font-bold text-slate-800 dark:text-slate-200 truncate">
-                                {bItem.item_name || (invItem ? invItem.item_name : bItem.item_code)}
+                                {itemName}
                               </p>
                               <p className="text-[10px] text-slate-400 font-mono mt-0.5">
                                 Code: {bItem.item_code}
@@ -2073,9 +2057,6 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                             <div className="text-right shrink-0">
                               <p className="font-extrabold text-slate-900 dark:text-white">
                                 {qty} units
-                              </p>
-                              <p className={`text-[10.5px] font-bold mt-0.5 ${isCapped ? 'text-rose-500 font-extrabold' : 'text-slate-400'}`}>
-                                Stock: {available} {isCapped && '(Capped)'}
                               </p>
                             </div>
                           </div>
