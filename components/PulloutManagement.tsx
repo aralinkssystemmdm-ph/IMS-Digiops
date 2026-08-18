@@ -114,9 +114,10 @@ const SAMPLE_PULLOUT_DATA: PulloutRequest[] = [
 
 interface PulloutManagementProps {
   isDarkMode?: boolean;
+  userRole?: string | null;
 }
 
-const PulloutManagement: React.FC<PulloutManagementProps> = ({ isDarkMode = false }) => {
+const PulloutManagement: React.FC<PulloutManagementProps> = ({ isDarkMode = false, userRole = 'Staff' }) => {
   const navigate = useNavigate();
   const { showInfo, showSuccess } = useNotification();
   const [searchQuery, setSearchQuery] = useState('');
@@ -275,17 +276,32 @@ const PulloutManagement: React.FC<PulloutManagementProps> = ({ isDarkMode = fals
           description="Manage equipment and asset pullout requests" 
           isDarkMode={isDarkMode}
           actions={
-            <button
-              onClick={handleCreatePullout}
-              className="px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider text-white shadow-lg active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90"
-              style={{
-                backgroundColor: 'var(--brand-accent)',
-                boxShadow: '0 4px 15px -3px color-mix(in srgb, var(--brand-accent), transparent 60%)'
-              }}
-            >
-              <Plus size={16} strokeWidth={2.5} />
-              Create Pullout
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handlePrintPullout('All')}
+                className={`px-4 py-2.5 rounded-xl border text-[10px] font-black tracking-widest uppercase transition-all flex items-center gap-2 cursor-pointer shadow-sm ${
+                  isDarkMode 
+                    ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800' 
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Printer size={14} />
+                Export / Print
+              </button>
+              {userRole !== 'Staff' && (
+                <button
+                  onClick={handleCreatePullout}
+                  className="px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider text-white shadow-lg active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90"
+                  style={{
+                    backgroundColor: 'var(--brand-accent)',
+                    boxShadow: '0 4px 15px -3px color-mix(in srgb, var(--brand-accent), transparent 60%)'
+                  }}
+                >
+                  <Plus size={16} strokeWidth={2.5} />
+                  Create Pullout
+                </button>
+              )}
+            </div>
           }
         />
       </div>
@@ -436,17 +452,19 @@ const PulloutManagement: React.FC<PulloutManagementProps> = ({ isDarkMode = fals
                         >
                           <Eye size={15} />
                         </button>
-                        <button
-                          onClick={() => navigate(`/pullout/edit/${pullout.id}`)}
-                          className={`p-2 rounded-lg border transition-all hover:scale-110 cursor-pointer ${
-                            isDarkMode 
-                              ? 'bg-slate-950 border-slate-800 text-slate-300 hover:text-blue-400 hover:bg-slate-800' 
-                              : 'bg-white border-slate-100 text-slate-600 hover:text-blue-500 hover:bg-slate-50'
-                          }`}
-                          title="Edit Pullout Request"
-                        >
-                          <Notebook size={15} />
-                        </button>
+                        {userRole !== 'Staff' && (
+                          <button
+                            onClick={() => navigate(`/pullout/edit/${pullout.id}`)}
+                            className={`p-2 rounded-lg border transition-all hover:scale-110 cursor-pointer ${
+                              isDarkMode 
+                                ? 'bg-slate-950 border-slate-800 text-slate-300 hover:text-blue-400 hover:bg-slate-800' 
+                                : 'bg-white border-slate-100 text-slate-600 hover:text-blue-500 hover:bg-slate-50'
+                            }`}
+                            title="Edit Pullout Request"
+                          >
+                            <Notebook size={15} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -818,17 +836,19 @@ const PulloutManagement: React.FC<PulloutManagementProps> = ({ isDarkMode = fals
                     Print
                   </button>
 
-                  <button
-                    onClick={() => notifyPlaceholder('Authorize Pullout')}
-                    disabled={selectedPullout.status === 'Cancelled' || selectedPullout.status === 'Completed'}
-                    className={`py-2 px-4 rounded-xl text-xs font-black uppercase tracking-wider text-white shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:pointer-events-none`}
-                    style={{
-                      backgroundColor: 'var(--brand-accent)',
-                    }}
-                  >
-                    <FileCheck size={14} />
-                    Authorize Pullout
-                  </button>
+                  {userRole !== 'Staff' && (
+                    <button
+                      onClick={() => notifyPlaceholder('Authorize Pullout')}
+                      disabled={selectedPullout.status === 'Cancelled' || selectedPullout.status === 'Completed'}
+                      className={`py-2 px-4 rounded-xl text-xs font-black uppercase tracking-wider text-white shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:pointer-events-none`}
+                      style={{
+                        backgroundColor: 'var(--brand-accent)',
+                      }}
+                    >
+                      <FileCheck size={14} />
+                      Authorize Pullout
+                    </button>
+                  )}
                 </div>
               </div>
 

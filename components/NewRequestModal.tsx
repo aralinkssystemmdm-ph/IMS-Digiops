@@ -26,6 +26,7 @@ interface EquipmentRecord {
 interface SchoolItem {
   name: string;
   customer_code?: string;
+  school_monitoring_id?: string;
   is_buffer: boolean;
 }
 
@@ -175,7 +176,9 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
             status_dates: typeof row.status_dates === 'string' 
               ? JSON.parse(row.status_dates) 
               : (row.status_dates || {}),
-            items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+            items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+            school_monitoring_id: row.school_monitoring_id || '',
+            type_of_document: row.type_of_document || ''
           }));
 
           monitoringData = dbRecords;
@@ -201,6 +204,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
         uniqueSchoolsMap.set(record.school_name, {
           name: record.school_name,
           customer_code: record.customer_code,
+          school_monitoring_id: record.school_monitoring_id,
           is_buffer: false
         });
       }
@@ -745,6 +749,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
       const firstSelectedSchool = selectedSchools[0];
       const selectedSchoolData = schools.find(s => s.name === firstSelectedSchool);
       const isSelectedSchoolBuffer = selectedSchoolData?.is_buffer === true || String(selectedSchoolData?.is_buffer) === 'true';
+      const schoolMonitoringId = selectedSchoolData?.school_monitoring_id || null;
 
       const payload = {
         control_no: controlNo.trim(),
@@ -761,7 +766,8 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
         remarks: remarks.trim(),
         attachment: attachment_url,
         updated_by: currentUser,
-        updated_at: now
+        updated_at: now,
+        school_monitoring_id: schoolMonitoringId
       };
 
       console.log("Submitting payload to item_requests:", payload);
@@ -1191,11 +1197,18 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ isOpen, onClose, onSu
                                   >
                                     {school.name}
                                   </span>
-                                  {school.customer_code && (
-                                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 opacity-70 uppercase tracking-tight">
-                                      {school.customer_code}
-                                    </span>
-                                  )}
+                                  <div className="flex flex-wrap items-center gap-x-2">
+                                    {school.customer_code && (
+                                      <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 opacity-70 uppercase tracking-tight">
+                                        Code: {school.customer_code}
+                                      </span>
+                                    )}
+                                    {school.school_monitoring_id && (
+                                      <span className="text-[9px] font-mono text-brand-orange dark:text-orange-400 font-bold uppercase tracking-tight">
+                                        ID: {school.school_monitoring_id}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                               {isBufferActual && (

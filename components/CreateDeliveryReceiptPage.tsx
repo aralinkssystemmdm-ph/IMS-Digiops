@@ -41,6 +41,7 @@ interface DRHardwareItem {
   description: string;
   specifications: string;
   remarks: string;
+  item_code?: string;
 }
 
 interface DRServiceItem {
@@ -100,12 +101,19 @@ const MOCK_HARDWARE_CATALOG = [
 
 interface CreateDeliveryReceiptPageProps {
   isDarkMode?: boolean;
+  userRole?: string | null;
 }
 
-export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps> = ({ isDarkMode = false }) => {
+export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps> = ({ isDarkMode = false, userRole = 'Staff' }) => {
   const { drId } = useParams<{ drId?: string }>();
   const navigate = useNavigate();
   const { showSuccess, showError, showInfo } = useNotification();
+
+  useEffect(() => {
+    if (userRole === 'Staff') {
+      navigate('/delivery-receipt', { replace: true });
+    }
+  }, [userRole, navigate]);
 
   const isEditMode = !!drId;
 
@@ -121,9 +129,11 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
   const [project, setProject] = useState('');
   const [moa, setMoa] = useState('');
   const [status, setStatus] = useState<DeliveryReceiptData['status']>('Ready for delivery');
+  const [initialStatus, setInitialStatus] = useState<DeliveryReceiptData['status'] | null>(null);
   const [inTransitDate, setInTransitDate] = useState('');
   const [deliveredDate, setDeliveredDate] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [schoolMonitoringId, setSchoolMonitoringId] = useState('');
 
   // Items Tables states
   const [hardwareItems, setHardwareItems] = useState<DRHardwareItem[]>([]);
@@ -141,49 +151,83 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
   const [monitoringRecords, setMonitoringRecords] = useState<any[]>([]);
 
   useEffect(() => {
-    const raw = localStorage.getItem('aralinks_school_monitoring');
-    let loaded: any[] = [];
-    if (raw) {
-      try {
-        loaded = JSON.parse(raw);
-      } catch (e) {
-        console.error('Failed to parse aralinks_school_monitoring', e);
-      }
-    }
-    
-    if (!loaded || loaded.length === 0) {
-      // Use fallback matching SchoolMonitoring.tsx mock
-      loaded = [
-        {
-          id: 'mock-1',
-          customer_code: 'SCH-2026-001',
-          school_name: 'St. Mary Polytechnic College',
-          program: 'ACE',
-          sales_team: 'Luzon Elite Sales Force',
-          class_opening: '2026-06-15',
-          target_deployment_date: '2026-06-08',
-          status: 5,
-          items: [
-            { item_code: 'INVD0000336', item_name: 'Acer A15 Laptop Steel Gray', quantity: 15 },
-            { item_code: 'INVD0000344', item_name: 'Acer Laptop Charger Thin Pin', quantity: 15 }
-          ]
-        },
-        {
-          id: 'mock-2',
-          customer_code: 'SCH-2026-042',
-          school_name: 'Quezon Science High School',
-          program: 'NGS',
-          sales_team: 'NCR Academic Alliance',
-          class_opening: '2026-07-20',
-          target_deployment_date: '2026-07-10',
-          status: 3,
-          items: [
-            { item_code: 'INVD0000410', item_name: 'Smart Interactive Board (SIB) 65"', quantity: 1 }
-          ]
+    const fetchMonitoring = async () => {
+      let loaded: any[] = [];
+      if (isSupabaseConfigured) {
+        try {
+          const { data, error } = await supabase
+            .from('school_monitoring')
+            .select('*')
+            .order('school_name', { ascending: true });
+          if (!error && data && data.length > 0) {
+            loaded = data.map((row: any) => ({
+              ...row,
+              id: row.id,
+              school_name: row.school_name,
+              school_monitoring_id: row.school_monitoring_id || '',
+              customer_code: row.customer_code,
+              program: row.program,
+              sales_team: row.sales_team,
+              class_opening: row.class_opening,
+              target_deployment_date: row.target_deployment_date,
+              status: row.status,
+              items: row.items || []
+            }));
+          }
+        } catch (e) {
+          console.error('Failed to fetch school_monitoring from Supabase', e);
         }
-      ];
-    }
-    setMonitoringRecords(loaded);
+      }
+
+      if (loaded.length === 0) {
+        const raw = localStorage.getItem('aralinks_school_monitoring');
+        if (raw) {
+          try {
+            loaded = JSON.parse(raw);
+          } catch (e) {
+            console.error('Failed to parse aralinks_school_monitoring', e);
+          }
+        }
+      }
+      
+      if (!loaded || loaded.length === 0) {
+        // Use fallback matching SchoolMonitoring.tsx mock
+        loaded = [
+          {
+            id: 'mock-1',
+            school_monitoring_id: 'SM-2026-001',
+            customer_code: 'SCH-2026-001',
+            school_name: 'St. Mary Polytechnic College',
+            program: 'ACE',
+            sales_team: 'Luzon Elite Sales Force',
+            class_opening: '2026-06-15',
+            target_deployment_date: '2026-06-08',
+            status: 5,
+            items: [
+              { item_code: 'INVD0000336', item_name: 'Acer A15 Laptop Steel Gray', quantity: 15 },
+              { item_code: 'INVD0000344', item_name: 'Acer Laptop Charger Thin Pin', quantity: 15 }
+            ]
+          },
+          {
+            id: 'mock-2',
+            school_monitoring_id: 'SM-2026-042',
+            customer_code: 'SCH-2026-042',
+            school_name: 'Quezon Science High School',
+            program: 'NGS',
+            sales_team: 'NCR Academic Alliance',
+            class_opening: '2026-07-20',
+            target_deployment_date: '2026-07-10',
+            status: 3,
+            items: [
+              { item_code: 'INVD0000410', item_name: 'Smart Interactive Board (SIB) 65"', quantity: 1 }
+            ]
+          }
+        ];
+      }
+      setMonitoringRecords(loaded);
+    };
+
+    fetchMonitoring();
   }, []);
 
   const [hardwareSearchQueries, setHardwareSearchQueries] = useState<{ [rowId: string]: string }>({});
@@ -246,6 +290,8 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
                 found = {
                   id: data.id,
                   schoolName: data.school_name,
+                  schoolMonitoringId: data.school_monitoring_id,
+                  school_monitoring_id: data.school_monitoring_id,
                   clientCode: data.client_code,
                   agent: data.agent,
                   project: data.project,
@@ -290,6 +336,7 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             setDateOfAcceptance(found.date);
             setDeliveredTo(found.schoolName || found.deliveredTo || '');
             setSchoolSearchQuery(found.schoolName || found.deliveredTo || '');
+            setSchoolMonitoringId(found.school_monitoring_id || found.schoolMonitoringId || '');
             setClientCode(found.clientCode || '');
             setAddress(found.address || '');
             setAgent(found.agent || '');
@@ -298,6 +345,7 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             setProject(found.project || '');
             setMoa(found.moa || '');
             setStatus(found.status || 'Ready for delivery');
+            setInitialStatus(found.status || 'Ready for delivery');
             setInTransitDate(found.inTransitDate || '');
             setDeliveredDate(found.deliveredDate || '');
             setRemarks(found.remarks || '');
@@ -439,6 +487,8 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
     const schoolName = school.school_name || school.name || '';
     setDeliveredTo(schoolName);
     setSchoolSearchQuery(schoolName);
+    const smId = school.school_monitoring_id || school.id || '';
+    setSchoolMonitoringId(smId);
     setClientCode(school.customer_code || school.customerCode || '');
     setAddress(school.location || school.address || 'BAGUIO CITY, BEN');
     setAgent(school.sales_team || school.salesTeam || 'Team Gina');
@@ -464,7 +514,8 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
           unit: it.unit || it.uom || matched?.unit || 'pcs',
           description: it.item_name || it.description || '',
           specifications: it.specifications || matched?.spec || '',
-          remarks: it.remarks || ''
+          remarks: it.remarks || '',
+          item_code: itemCode
         };
       });
       setHardwareItems(populatedHardware);
@@ -597,7 +648,8 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             unit: bundleItemUom,
             description: bundleItem.description || '',
             specifications: spec,
-            remarks: `Bundle: ${pendingBundle}`
+            remarks: `Bundle: ${pendingBundle}`,
+            item_code: bundleItem.item_code
           });
         });
         
@@ -658,7 +710,8 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
     updateHardwareRow(rowId, {
       description: nameStr,
       unit: resolvedUnit,
-      specifications: resolvedSpecifications
+      specifications: resolvedSpecifications,
+      item_code: code
     });
     
     // Clear searches
@@ -790,12 +843,47 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
     }
 
     try {
+      // Validate stock levels before proceeding (especially if status is 'In Transit' or 'Delivered')
+      if (status === 'In Transit' || status === 'Delivered') {
+        for (const item of hardwareItems) {
+          let itemCode = item.item_code;
+          if (!itemCode) {
+            const matched = resolvedInventoryItems.find(it => 
+              (it.item_name || '').toLowerCase() === (item.description || '').toLowerCase()
+            );
+            if (matched) {
+              itemCode = matched.item_code;
+            }
+          }
+
+          if (itemCode) {
+            const invItem = resolvedInventoryItems.find(it => it.item_code === itemCode);
+            const availableStock = invItem ? Number(invItem.total_quantity || 0) : 0;
+            if (availableStock < Number(item.qty || 0)) {
+              showError(
+                'Insufficient Stock Trigger',
+                `Cannot save as "${status}" because item "${item.description}" has insufficient stock! Available: ${availableStock}, Requested: ${item.qty}`
+              );
+              return;
+            }
+          } else {
+            showError(
+              'Item Unmapped Trigger',
+              `Cannot proceed with "${status}" because "${item.description || 'Unknown Item'}" is not found in the active inventory catalog.`
+            );
+            return;
+          }
+        }
+      }
+
       const computedTotalItems = hardwareItems.reduce((sum, item) => sum + Number(item.qty || 0), 0);
 
       // Map back to global management schema so that listings automatically integrate
       const newDRRecord = {
         id: drNo,
         schoolName: deliveredTo,
+        schoolMonitoringId: schoolMonitoringId,
+        school_monitoring_id: schoolMonitoringId,
         clientCode: clientCode || 'CL-GEN-999',
         agent: agent || 'Direct Store',
         project: project || 'ACE',
@@ -838,6 +926,7 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
           const dbPayload = {
             id: drNo,
             school_name: deliveredTo,
+            school_monitoring_id: schoolMonitoringId,
             client_code: clientCode || 'CL-GEN-999',
             agent: agent || 'Direct Store',
             project: project || 'ACE',
@@ -868,6 +957,112 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             .upsert(dbPayload, { onConflict: 'id' });
 
           if (error) throw error;
+
+          // Once status is 'In Transit' or 'Delivered' (and transitioning from a non-transit status),
+          // deduct stock from item_location_stocks and log to stock_transactions
+          const isTransitioningToTransit = 
+            (status === 'In Transit' || status === 'Delivered') && 
+            (initialStatus !== 'In Transit' && initialStatus !== 'Delivered');
+
+          if (isTransitioningToTransit) {
+            const currentUser = localStorage.getItem('aralinks_user') || 'System';
+
+            for (const item of hardwareItems) {
+              let itemCode = item.item_code;
+              let itemName = item.description;
+
+              if (!itemCode) {
+                const matched = resolvedInventoryItems.find(it => 
+                  (it.item_name || '').toLowerCase() === (item.description || '').toLowerCase()
+                );
+                if (matched) {
+                  itemCode = matched.item_code;
+                  itemName = matched.item_name;
+                }
+              }
+
+              if (!itemCode) continue;
+
+              let qtyToDeduct = Number(item.qty || 0);
+              if (qtyToDeduct <= 0) continue;
+
+              // Fetch location stocks to deduct from
+              const { data: stockRecords, error: fetchErr } = await supabase
+                .from('item_location_stocks')
+                .select('id, location, quantity')
+                .eq('item_code', itemCode)
+                .order('quantity', { ascending: false });
+
+              if (fetchErr) throw fetchErr;
+
+              let deductedLocations: Array<{ location: string, qty: number }> = [];
+
+              if (stockRecords && stockRecords.length > 0) {
+                for (const record of stockRecords) {
+                  if (qtyToDeduct <= 0) break;
+
+                  const availableRecordQty = Number(record.quantity || 0);
+                  if (availableRecordQty <= 0) continue;
+
+                  const toDeductNow = Math.min(availableRecordQty, qtyToDeduct);
+                  const newRecordQty = availableRecordQty - toDeductNow;
+
+                  const { error: updateErr } = await supabase
+                    .from('item_location_stocks')
+                    .update({ quantity: newRecordQty })
+                    .eq('id', record.id);
+
+                  if (updateErr) throw updateErr;
+
+                  qtyToDeduct -= toDeductNow;
+                  deductedLocations.push({ location: record.location, qty: toDeductNow });
+                }
+              }
+
+              // Fallback if needed (though our UI validation prevents this)
+              if (qtyToDeduct > 0) {
+                const fallbackLoc = stockRecords?.[0]?.location || 'Main Depot';
+                const fallbackRecord = stockRecords?.[0];
+
+                if (fallbackRecord) {
+                  const { error: updateErr } = await supabase
+                    .from('item_location_stocks')
+                    .update({ quantity: Number(fallbackRecord.quantity || 0) - qtyToDeduct })
+                    .eq('id', fallbackRecord.id);
+                  if (updateErr) throw updateErr;
+                } else {
+                  const { error: insertErr } = await supabase
+                    .from('item_location_stocks')
+                    .insert([{
+                      item_code: itemCode,
+                      item_name: itemName,
+                      location: fallbackLoc,
+                      quantity: -qtyToDeduct
+                    }]);
+                  if (insertErr) throw insertErr;
+                }
+                deductedLocations.push({ location: fallbackLoc, qty: qtyToDeduct });
+              }
+
+              // Write transactions to stock_transactions for history log
+              for (const dLoc of deductedLocations) {
+                const { error: txError } = await supabase
+                  .from('stock_transactions')
+                  .insert([{
+                    item_code: itemCode,
+                    from_location: dLoc.location,
+                    to_location: deliveredTo,
+                    quantity: dLoc.qty,
+                    transaction_type: 'Delivery',
+                    reference_id: drNo,
+                    created_by: currentUser,
+                    reason: `Delivered to School: ${deliveredTo} via DR ${drNo}`
+                  }]);
+
+                if (txError) throw txError;
+              }
+            }
+          }
         } catch (dbErr) {
           console.warn('Failed to persist to Supabase delivery_receipts table. Saved locally.', dbErr);
         }
@@ -1008,6 +1203,7 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
                       onClick={() => {
                         setSchoolSearchQuery('');
                         setDeliveredTo('');
+                        setSchoolMonitoringId('');
                         setClientCode('');
                         setAddress('');
                         setAgent('');
@@ -1018,6 +1214,12 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
                     </button>
                   )}
                 </div>
+
+                {schoolMonitoringId && (
+                  <div className="text-[11px] font-mono font-extrabold text-brand-orange mt-1 select-all">
+                    School Monitoring ID: {schoolMonitoringId}
+                  </div>
+                )}
 
                 {isSchoolDropdownOpen && filteredSchools.length > 0 && (
                   <div className={`absolute left-0 right-0 top-full mt-1 rounded-xl border shadow-xl z-50 p-1.5 max-h-56 overflow-y-auto ${
@@ -1036,7 +1238,7 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
                         }`}
                       >
                         <span className="font-bold">{s.school_name || s.name}</span>
-                        <span className="text-[11px] text-slate-400 font-mono">Code: {s.customer_code} • Sales Team: {s.sales_team || s.salesTeam || ''}</span>
+                        <span className="text-[11px] text-brand-orange font-mono font-extrabold">School Monitoring ID: {s.school_monitoring_id || s.id || '-'}</span>
                       </button>
                     ))}
                   </div>
@@ -1263,9 +1465,49 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
                     <Trash2 size={13} />
                   </button>
 
-                  <div className="text-xs font-extrabold text-brand-orange font-mono select-none">
-                    Hardware Unit #{index + 1}
-                  </div>
+                  {/* Real-time Stock Connection & Warnings */}
+                  {(() => {
+                    const rowItemCode = row.item_code || (() => {
+                      const matched = resolvedInventoryItems.find(it => 
+                        (it.item_name || '').toLowerCase() === (row.description || '').toLowerCase()
+                      );
+                      return matched?.item_code;
+                    })();
+                    const invItem = rowItemCode ? resolvedInventoryItems.find(it => it.item_code === rowItemCode) : null;
+                    const availableStock = invItem ? Number(invItem.total_quantity || 0) : 0;
+                    const hasInsufficientStock = availableStock < Number(row.qty || 0);
+
+                    return (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                        <div className="text-xs font-extrabold text-brand-orange font-mono select-none flex items-center gap-2">
+                          Hardware Unit #{index + 1}
+                          {rowItemCode && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono font-normal">
+                              Code: {rowItemCode}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-xs font-bold sm:mr-8">
+                          {invItem ? (
+                            hasInsufficientStock ? (
+                              <span className="text-red-500 font-black animate-pulse flex items-center gap-1 bg-red-50 dark:bg-red-950/20 px-2 py-0.5 rounded-md">
+                                <AlertCircle size={12} /> Insufficient Stock! Available: {availableStock}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 px-2 py-0.5 rounded-md">
+                                ✓ Stock Available: {availableStock}
+                              </span>
+                            )
+                          ) : row.description ? (
+                            <span className="text-amber-500 bg-amber-50 dark:bg-amber-950/20 px-2 py-0.5 rounded-md">
+                              ⚠ Not found in Inventory Catalog
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
                     
@@ -1466,12 +1708,20 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             {/* Client information fields grid */}
             <div className="grid grid-cols-12 gap-y-2 text-[10px] text-left mt-4 pb-4 border-b border-zinc-300">
               
-              <div className="col-span-7 flex items-end pr-4">
-                <span className="w-24 shrink-0 font-bold text-zinc-700">Delivered to</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-black text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
-                  {deliveredTo || 'ST. LOUIS SCHOOL (CENTER), INC.'}
-                </span>
+              <div className="col-span-7 flex flex-col pr-4 justify-end">
+                <div className="flex items-end">
+                  <span className="w-24 shrink-0 font-bold text-zinc-700">Delivered to</span>
+                  <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                  <span className="font-black text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
+                    {deliveredTo || 'ST. LOUIS SCHOOL (CENTER), INC.'}
+                  </span>
+                </div>
+                {schoolMonitoringId && (
+                  <div className="flex items-end mt-1 font-mono text-[9px] text-brand-orange pl-[102px]">
+                    <span className="font-bold text-zinc-500 mr-1.5">ID:</span>
+                    <span className="font-black text-zinc-900">{schoolMonitoringId}</span>
+                  </div>
+                )}
               </div>
               <div className="col-span-5 flex items-end">
                 <span className="w-20 shrink-0 font-bold text-zinc-700">Client Code</span>

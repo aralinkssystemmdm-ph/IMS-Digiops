@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS school_monitoring (
   status INTEGER DEFAULT 1,
   status_dates JSONB,
   items JSONB,
+  school_monitoring_id TEXT,
+  type_of_document TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -77,4 +79,10 @@ CREATE TABLE IF NOT EXISTS delivery_receipts (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- ALTER statements to add missing columns if they already exist
+ALTER TABLE school_monitoring ADD COLUMN IF NOT EXISTS school_monitoring_id TEXT;
+ALTER TABLE school_monitoring ADD COLUMN IF NOT EXISTS type_of_document TEXT;
+
+ALTER TABLE item_requests ADD COLUMN IF NOT EXISTS school_monitoring_id TEXT;
 

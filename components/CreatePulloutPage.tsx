@@ -75,9 +75,20 @@ interface AttachmentFile {
   base64Src?: string;
 }
 
-const CreatePulloutPage: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMode = false }) => {
+interface CreatePulloutPageProps {
+  isDarkMode?: boolean;
+  userRole?: string | null;
+}
+
+const CreatePulloutPage: React.FC<CreatePulloutPageProps> = ({ isDarkMode = false, userRole = 'Staff' }) => {
   const navigate = useNavigate();
   const { showSuccess, showError, showWarning, showInfo } = useNotification();
+
+  useEffect(() => {
+    if (userRole === 'Staff') {
+      navigate('/pullout', { replace: true });
+    }
+  }, [userRole, navigate]);
 
   // Loading States
   const [schools, setSchools] = useState<SchoolRecord[]>([]);

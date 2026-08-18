@@ -2,12 +2,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Archive, Edit3, Loader2, FileText, Eye, ArrowUp, ArrowDown, CheckSquare, Square, Filter, ChevronDown, ChevronUp, Clock, MapPin, Tag, CheckCircle2, CalendarDays, X, Plus, Check, Calendar, Paperclip, Trash2, Box, History, Printer, ExternalLink, ArrowRightLeft, Notebook, TrendingUp } from 'lucide-react';
+import { Search, Archive, Edit3, Loader2, FileText, Eye, ArrowUp, ArrowDown, CheckSquare, Square, Filter, ChevronDown, ChevronUp, Clock, MapPin, Tag, CheckCircle2, CalendarDays, X, Plus, Check, Calendar, Paperclip, Trash2, Box, History, Printer, ExternalLink, ArrowRightLeft, Notebook, TrendingUp, Ban, RotateCcw } from 'lucide-react';
 import { toTitleCase, cleanPONumber, getBundleColor, getProgramBadgeClass } from '../lib/utils';
 import NewRequestModal from './NewRequestModal';
 import RequestPreviewModal from './RequestPreviewModal';
 import ItemVerificationModal from './ItemVerificationModal';
 import DeleteConfirmationModal from './DeleteConfirmationModal';
+import CancelRequestModal from './CancelRequestModal';
+import { syncSchoolMonitoringStage3 } from './monitoringSync';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useNotification } from './NotificationProvider';
 import PageHeader from './PageHeader';
@@ -34,7 +36,7 @@ export interface RequestData {
   requestedBy: string;
   archivedBy?: string; 
   archivedAt?: string;
-  status: 'Pending' | 'Delivered' | 'Partially Delivered';
+  status: 'Pending' | 'Delivered' | 'Partially Delivered' | 'Cancelled';
   purpose?: string;
   program?: string;
   poNumber?: string | null;
@@ -42,6 +44,7 @@ export interface RequestData {
   items?: any[];
   attachment?: string;
   deliveredAt?: string;
+  school_monitoring_id?: string | null;
 }
 
 interface POEntry {
@@ -51,7 +54,7 @@ interface POEntry {
   itemQuantities: Record<string, number>;
 }
 
-type StatusFilterType = 'All' | 'Pending' | 'Partially' | 'Completed';
+type StatusFilterType = 'All' | 'Pending' | 'Partially' | 'Completed' | 'Cancelled';
 type ProgramFilterType = 'All' | 'NGS' | 'HUB' | 'TNL' | 'ACE' | 'NGS+ACE' | 'HUB+ACE' | 'PELS NGS' | 'PELS NGS+ACE' | 'ACE+PELS' | 'ABDL' | 'ACE+ABDL' | 'HUB+NGS' | 'ABDL (PELS)';
 type DateFilterType = 'All' | 'Today' | 'This Week' | 'This Month' | 'Custom';
 
@@ -627,6 +630,7 @@ const RequestDetailsSidebar: React.FC<RequestDetailsSidebarProps> = ({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (request.status === 'Cancelled') return;
                             const hasItems = po.items && po.items.length > 0;
                             const poItemsMap: Record<string, number> = {};
                             if (hasItems) {
@@ -643,8 +647,13 @@ const RequestDetailsSidebar: React.FC<RequestDetailsSidebarProps> = ({
                             });
                             onClose();
                           }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest shadow-sm"
-                          title="Process Deliverables for this PO"
+                          disabled={request.status === 'Cancelled'}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-sm transition-all ${
+                            request.status === 'Cancelled'
+                              ? 'opacity-40 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700'
+                              : 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white cursor-pointer active:scale-95'
+                          }`}
+                          title={request.status === 'Cancelled' ? "Processing deliverables is disabled for cancelled requests" : "Process Deliverables for this PO"}
                         >
                           <Edit3 size={12} />
                           <span>Process</span>
@@ -840,9 +849,13 @@ const RequestDetailsSidebar: React.FC<RequestDetailsSidebarProps> = ({
          {userRole !== 'Staff' && (
            <button 
              onClick={onUpdateDelivery}
+             disabled={request.status === 'Cancelled'}
              className={`w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
-               isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+               request.status === 'Cancelled'
+                 ? 'opacity-40 cursor-not-allowed bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500'
+                 : isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 cursor-pointer active:scale-95' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 cursor-pointer active:scale-95'
              }`}
+             title={request.status === 'Cancelled' ? "Update Delivery is disabled for cancelled requests" : "Update Delivery"}
            >
              <Edit3 size={12} /> Update Delivery
            </button>
@@ -907,6 +920,87 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
   
   const [sortField, setSortField] = useState<'control_no' | 'school_name' | 'program' | 'date' | 'status'>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [requestToCancel, setRequestToCancel] = useState<RequestData | null>(null);
+  const [isProcessingCancel, setIsProcessingCancel] = useState(false);
+  const [cancelModalMode, setCancelModalMode] = useState<'cancel' | 'undo'>('cancel');
+
+  const handleInitiateCancel = (req: RequestData) => {
+    setRequestToCancel(req);
+    setCancelModalMode('cancel');
+    setIsCancelModalOpen(true);
+  };
+
+  const handleInitiateUndoCancel = (req: RequestData) => {
+    setRequestToCancel(req);
+    setCancelModalMode('undo');
+    setIsCancelModalOpen(true);
+  };
+
+  const handleConfirmCancelOrUndo = async () => {
+    if (!requestToCancel) return;
+    setIsProcessingCancel(true);
+    try {
+      const targetControlNo = requestToCancel.id;
+      const targetSchoolMonitoringId = requestToCancel.school_monitoring_id;
+      const targetSchoolName = requestToCancel.schoolName;
+
+      if (cancelModalMode === 'cancel') {
+        // 1. Update Supabase
+        if (isSupabaseConfigured) {
+          const { error } = await supabase
+            .from('item_requests')
+            .update({
+              status: 'Cancelled',
+              updated_at: new Date().toISOString()
+            })
+            .eq('control_no', targetControlNo);
+          if (error) throw error;
+        }
+
+        // 2. Update local state
+        setRequests(prev => prev.map(r => r.id === targetControlNo ? { ...r, status: 'Cancelled' } : r));
+
+        // 3. Sync and clear School Monitoring stage 3 date
+        await syncSchoolMonitoringStage3(targetSchoolMonitoringId, targetSchoolName, targetControlNo, 'cancel');
+
+        showSuccess('Request Cancelled', `Item request ${targetControlNo} has been cancelled and faded. Actions and PO assignment disabled.`);
+      } else {
+        // Undo Cancel: Restore status
+        const hasDeliveries = requestToCancel.items?.some(it => (parseInt(it.received_quantity) || 0) > 0);
+        const restoredStatus: 'Pending' | 'Partially Delivered' | 'Delivered' = hasDeliveries ? 'Partially Delivered' : 'Pending';
+
+        // 1. Update Supabase
+        if (isSupabaseConfigured) {
+          const { error } = await supabase
+            .from('item_requests')
+            .update({
+              status: restoredStatus,
+              updated_at: new Date().toISOString()
+            })
+            .eq('control_no', targetControlNo);
+          if (error) throw error;
+        }
+
+        // 2. Update local state
+        setRequests(prev => prev.map(r => r.id === targetControlNo ? { ...r, status: restoredStatus } : r));
+
+        // 3. Sync and restore School Monitoring stage 3 date
+        await syncSchoolMonitoringStage3(targetSchoolMonitoringId, targetSchoolName, targetControlNo, 'undo', requestToCancel.date);
+
+        showSuccess('Cancellation Undone', `Item request ${targetControlNo} has been restored to ${restoredStatus}. School monitoring date re-synced.`);
+      }
+
+      setIsCancelModalOpen(false);
+      setRequestToCancel(null);
+    } catch (err: any) {
+      console.error('Failed to process cancel/undo:', err);
+      showError('Action Failed', err.message || 'Could not process cancellation request.');
+    } finally {
+      setIsProcessingCancel(false);
+    }
+  };
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -981,7 +1075,7 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
   }, [prefillItem, prefillCode, openNewRequest]);
 
   useEffect(() => {
-    if (openPoModal && highlightedId && !loading && requests.length > 0 && !hasAutoOpened) {
+    if (openPoModal && highlightedId && !loading && requests.length > 0 && !hasAutoOpened && userRole !== 'Staff') {
       const targetRequest = requests.find(r => r.id === highlightedId);
       if (targetRequest) {
         const entries = parsePOString(targetRequest.poNumber, targetRequest.items || []);
@@ -1046,9 +1140,11 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
         console.error('Error fetching requests:', error);
       } else if (data) {
         const mapped = data.map((req: any) => {
-          let status: 'Pending' | 'Delivered' | 'Partially Delivered' = 'Pending';
+          let status: 'Pending' | 'Delivered' | 'Partially Delivered' | 'Cancelled' = 'Pending';
           
-          if (req.status === 'Delivered' || req.status === 'Partially Delivered') {
+          if (req.status === 'Cancelled') {
+            status = 'Cancelled';
+          } else if (req.status === 'Delivered' || req.status === 'Partially Delivered') {
             status = req.status;
           } else if (req.status === 'Complete' || req.delivered_at) {
             status = 'Delivered';
@@ -1069,6 +1165,7 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
             remarks: req.remarks,
             attachment: req.attachment,
             deliveredAt: req.delivered_at,
+            school_monitoring_id: req.school_monitoring_id,
             items: req.request_items.map((item: any) => {
               return {
                 id: item.id,
@@ -1154,6 +1251,7 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
       Pending: requests.filter(r => r.status === 'Pending').length,
       Partially: requests.filter(r => r.status === 'Partially Delivered').length,
       Completed: requests.filter(r => r.status === 'Delivered').length,
+      Cancelled: requests.filter(r => r.status === 'Cancelled').length,
     };
     list.forEach(p => {
       res[p] = requests.filter(r => (r.program || 'GENERAL').toUpperCase() === p.toUpperCase()).length;
@@ -1176,6 +1274,7 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
         const internalStatus = 
           statusFilter === 'Pending' ? 'Pending' :
           statusFilter === 'Partially' ? 'Partially Delivered' :
+          statusFilter === 'Cancelled' ? 'Cancelled' :
           'Delivered';
         if (req.status !== internalStatus) return false;
       }
@@ -1289,11 +1388,13 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
     if (status === 'Pending') return 'Pending';
     if (status === 'Partially Delivered') return 'Partially';
     if (status === 'Delivered') return 'Completed';
+    if (status === 'Cancelled') return 'Cancelled';
     return status;
   };
 
   const renderRequestRow = (req: RequestData, i: number) => {
     const isSelected = selectedIds.has(req.id);
+    const isCancelled = req.status === 'Cancelled';
     const isDelivered = req.status === 'Delivered';
     const isPartial = req.status === 'Partially Delivered';
     const isFinalized = isDelivered || isPartial;
@@ -1330,6 +1431,17 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
               poNum = part.trim();
             }
 
+            if (userRole === 'Staff') {
+              return (
+                <span
+                  key={idx}
+                  className="text-[10px] font-black text-white bg-[#2563EB] px-3 py-1.5 rounded-lg tracking-tight uppercase shadow-md shadow-[#2563EB]/20 whitespace-nowrap border border-white/10 cursor-default"
+                >
+                  {poNum}
+                </span>
+              );
+            }
+
             return (
               <button
                 key={idx}
@@ -1359,7 +1471,9 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
           ref={el => { if (el) rowRefs.current[req.id] = el as any; }}
           style={{ animationDelay: `${i * 50}ms` }}
           className={`group animate-ease-in-down transition-all duration-200 border-l-4 hover:border-l-orange-500 cursor-pointer flex items-center px-6 py-3 min-w-[1000px] lg:min-w-full ${
-            i % 2 === 0 ? (isDarkMode ? 'bg-slate-900' : 'bg-white') : (isDarkMode ? 'bg-slate-800/30' : 'bg-gray-50/50')
+            isCancelled 
+              ? 'opacity-40 grayscale-[40%] bg-slate-100/70 dark:bg-slate-900/40 hover:opacity-85' 
+              : i % 2 === 0 ? (isDarkMode ? 'bg-slate-900' : 'bg-white') : (isDarkMode ? 'bg-slate-800/30' : 'bg-gray-50/50')
           } ${
             deletingId === req.id ? 'opacity-50 grayscale pointer-events-none' : ''
           } ${isHighlighted ? 'highlight-entry-focus' : ''} ${isSelected ? (isDarkMode ? 'bg-[#2563EB]/10 border-l-[#2563EB]' : 'bg-[#EFF6FF] border-l-[#2563EB]') : 'border-l-transparent'} ${selectedDetailsRequest?.id === req.id ? (isDarkMode ? 'bg-[#2563EB]/10 border-l-orange-500 shadow-inner' : 'bg-orange-50 border-l-orange-500 shadow-inner') : ''} hover:bg-orange-50 dark:hover:bg-slate-800 mb-[1px] last:mb-0 transition-colors`}
@@ -1389,8 +1503,13 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
           </div>
         </div>
 
-        <div className="flex-[1.8] min-w-0 px-2">
+        <div className="flex-[1.8] min-w-0 px-2 flex flex-col">
           <span className="text-xs font-bold text-slate-700 dark:text-slate-300 tracking-tight group-hover:text-slate-900 dark:group-hover:text-white transition-colors block">{req.schoolName}</span>
+          {req.school_monitoring_id && (
+            <span className="text-[10px] font-mono font-bold text-brand-orange mt-0.5">
+              ID: {req.school_monitoring_id}
+            </span>
+          )}
         </div>
 
         <div className="flex-1 min-w-0 px-2 flex flex-col items-start gap-1">
@@ -1422,14 +1541,21 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
         </div>
 
         <div className="flex-1 min-w-0 px-2 whitespace-nowrap flex justify-center">
-          <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full w-fit border transition-all duration-300 group-hover:scale-105 whitespace-nowrap ${
-            isDelivered ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-500/20' : 
-            isPartial ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-500/20' :
-            'bg-[#EFF6FF] dark:bg-[#2563EB]/10 text-[#2563EB] dark:text-[#3B82F6] border-[#2563EB]/5'
-          }`}>
-             {isFinalized ? <CheckCircle2 size={12} strokeWidth={2} className="shrink-0" /> : <Clock size={12} strokeWidth={2} className="shrink-0" />}
-             <span className="text-xs font-bold tracking-wide whitespace-nowrap">{getStatusLabel(req.status)}</span>
-          </div>
+          {isCancelled ? (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full w-fit border whitespace-nowrap bg-rose-50/80 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/40">
+              <Ban size={12} strokeWidth={2} className="shrink-0" />
+              <span className="text-xs font-bold tracking-wide whitespace-nowrap">Cancelled</span>
+            </div>
+          ) : (
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full w-fit border transition-all duration-300 group-hover:scale-105 whitespace-nowrap ${
+              isDelivered ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-500/20' : 
+              isPartial ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-500/20' :
+              'bg-[#EFF6FF] dark:bg-[#2563EB]/10 text-[#2563EB] dark:text-[#3B82F6] border-[#2563EB]/5'
+            }`}>
+               {isFinalized ? <CheckCircle2 size={12} strokeWidth={2} className="shrink-0" /> : <Clock size={12} strokeWidth={2} className="shrink-0" />}
+               <span className="text-xs font-bold tracking-wide whitespace-nowrap">{getStatusLabel(req.status)}</span>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 min-w-0 px-2 whitespace-nowrap flex flex-col items-center justify-center">
@@ -1452,9 +1578,21 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
         <div className="flex-[2] min-w-0 px-2" onClick={(e) => e.stopPropagation()}>
           <div 
             className="px-2 py-1 flex items-center gap-2 w-fit mx-auto"
-            title="Click a PO Number to manage it"
+            title={isCancelled ? "PO assignment is disabled for cancelled requests" : userRole === 'Staff' ? "PO assignment is disabled for Staff" : "Click a PO Number to manage it"}
           >
-            {req.poNumber ? (
+            {isCancelled || userRole === 'Staff' ? (
+              req.poNumber ? (
+                renderPODisplay(req.poNumber)
+              ) : (
+                <button 
+                  disabled
+                  className="text-[10px] text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md font-semibold tracking-wide block cursor-not-allowed border border-slate-200 dark:border-slate-700 opacity-60"
+                  title="Assign PO is disabled"
+                >
+                  Assign PO
+                </button>
+              )
+            ) : req.poNumber ? (
               renderPODisplay(req.poNumber)
             ) : (
               <button 
@@ -1476,15 +1614,44 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
 
 
         <div className="flex-1 min-w-0 px-2 whitespace-nowrap flex items-center justify-center gap-1 opacity-100 group-hover:opacity-100 transition-all duration-200" onClick={(e) => e.stopPropagation()}>
-          {userRole !== 'Staff' ? (
-            isDelivered ? (
+          {isCancelled ? (
+            <div className="flex items-center gap-1.5">
+              {userRole !== 'Staff' && (
+                <button 
+                  onClick={() => handleInitiateUndoCancel(req)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 dark:hover:bg-emerald-900/60 text-xs font-bold transition-all border border-emerald-200 dark:border-emerald-800 shadow-sm cursor-pointer active:scale-95"
+                  title="Undo cancellation and restore request"
+                >
+                  <RotateCcw size={13} />
+                  <span>Undo Cancel</span>
+                </button>
+              )}
               <button 
-                onClick={() => { setVerificationRequest(req); setIsVerificationModalOpen(true); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-[#2563EB] hover:bg-[#EFF6FF] cursor-pointer text-xs font-bold transition-all"
+                onClick={() => { setSelectedDetailsRequest(req); setIsSidebarOpen(true); }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-all cursor-pointer"
+                title="View Details"
               >
-                <History size={14} />
-                <span>View History</span>
+                <Eye size={16} />
               </button>
+            </div>
+          ) : userRole !== 'Staff' ? (
+            isDelivered ? (
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => { setVerificationRequest(req); setIsVerificationModalOpen(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-[#2563EB] hover:bg-[#EFF6FF] cursor-pointer text-xs font-bold transition-all"
+                >
+                  <History size={14} />
+                  <span>View History</span>
+                </button>
+                <button 
+                  onClick={() => handleInitiateCancel(req)}
+                  className="p-2 transition-all active:scale-95 rounded-md text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:text-slate-600 dark:hover:bg-rose-500/10 cursor-pointer"
+                  title="Cancel Request"
+                >
+                  <Ban size={18} />
+                </button>
+              </div>
             ) : (
               <>
                 {(() => {
@@ -1560,6 +1727,15 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
                     </>
                   );
                 })()}
+
+                {/* Cancel Request Button */}
+                <button 
+                  onClick={() => handleInitiateCancel(req)}
+                  className="p-2 transition-all active:scale-95 rounded-md text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:text-slate-600 dark:hover:bg-rose-500/10 cursor-pointer"
+                  title="Cancel Request"
+                >
+                  <Ban size={18} />
+                </button>
                 
                 <button 
                   onClick={() => { setIsBulkDeleting(false); setRequestToDelete(req); setIsDeleteModalOpen(true); }}
@@ -1576,13 +1752,15 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
               </>
             )
           ) : (
-            <button 
-              onClick={() => { setSelectedDetailsRequest(req); setIsSidebarOpen(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-[#2563EB] hover:bg-[#EFF6FF] cursor-pointer text-[10px] font-black uppercase tracking-widest transition-all"
-            >
-              <Eye size={14} />
-              <span>Details</span>
-            </button>
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => { setSelectedDetailsRequest(req); setIsSidebarOpen(true); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-[#2563EB] hover:bg-[#EFF6FF] cursor-pointer text-[10px] font-black uppercase tracking-widest transition-all"
+              >
+                <Eye size={14} />
+                <span>Details</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -2124,7 +2302,7 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
       
       <div className="mx-6 lg:mx-12 flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-8 mt-4">
         <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-          {(['All', 'Pending', 'Partially', 'Completed'] as StatusFilterType[]).map((filter) => (
+          {(['All', 'Pending', 'Partially', 'Completed', 'Cancelled'] as StatusFilterType[]).map((filter) => (
             <button
               key={filter}
               onClick={() => setStatusFilter(filter)}
@@ -2141,7 +2319,7 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
                 boxShadow: statusFilter === filter ? '0 8px 15px -3px color-mix(in srgb, var(--brand-accent), transparent 80%)' : undefined
               }}
             >
-              <span>{filter === 'Partially' ? 'PARTIAL' : filter === 'Completed' ? 'DELIVERED' : filter}</span>
+              <span>{filter === 'Partially' ? 'PARTIAL' : filter === 'Completed' ? 'DELIVERED' : filter.toUpperCase()}</span>
               <span className={`px-1.5 py-0.5 rounded-full text-[8px] font-black ${
                 statusFilter === filter 
                   ? 'bg-white/20 text-white' 
@@ -2543,41 +2721,6 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
         }} 
         onSubmit={(newId) => {
           fetchRequests(false);
-          if (!editingRequest && newId) {
-            // Find the new request in the current list or wait for fetch
-            // But fetchRequests(false) is async. 
-            // We can search for it after it completes or just trigger a side effect.
-            // Simplified: we'll handle this in fetchRequests callback or a separate useEffect
-            // For now, let's just trigger the open by looking for the ID after fetch.
-            setTimeout(() => {
-              const findAndOpen = async () => {
-                const { data } = await supabase.from('item_requests').select('*').eq('control_no', newId).single();
-                if (data) {
-                  const req = {
-                    id: data.control_no,
-                    schoolName: data.school_name,
-                    date: data.date,
-                    status: data.status,
-                    program: data.program,
-                    po_number: data.po_number,
-                    requestType: data.request_type,
-                    items: [] // fetch items too?
-                  } as any;
-                  
-                  // Need items for parsePOString
-                  const { data: items } = await supabase.from('item_request_items').select('*').eq('request_id', newId);
-                  req.items = items || [];
-                  req.poNumber = data.po_number;
-                  
-                  const entries = parsePOString(req.poNumber, req.items);
-                  setPoEntries(entries.length > 0 ? entries : [{ id: 1, poNumber: '', supplier: '', itemQuantities: {} }]);
-                  setPoModalRequest(req);
-                  setIsPoModalOpen(true);
-                }
-              };
-              findAndOpen();
-            }, 1000);
-          }
         }}
         initialData={editingRequest || undefined}
         isDarkMode={isDarkMode}
@@ -2648,6 +2791,17 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
         itemCount={isBulkDeleting ? selectedIds.size : undefined}
         isDarkMode={isDarkMode}
         type="request"
+      />
+
+      <CancelRequestModal
+        isOpen={isCancelModalOpen}
+        onClose={() => { setIsCancelModalOpen(false); setRequestToCancel(null); }}
+        onConfirm={handleConfirmCancelOrUndo}
+        controlNo={requestToCancel?.id || ''}
+        schoolName={requestToCancel?.schoolName || ''}
+        isProcessing={isProcessingCancel}
+        isDarkMode={isDarkMode}
+        mode={cancelModalMode}
       />
 
       {selectedIds.size > 0 && (

@@ -39,6 +39,7 @@ const SerialNumberEntryPage: React.FC = () => {
   const [nonSerializedItems, setNonSerializedItems] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isRequestCancelled, setIsRequestCancelled] = useState(false);
   const [deliveredDate, setDeliveredDate] = useState<string>(() => {
     const d = new Date();
     const year = d.getFullYear();
@@ -121,6 +122,11 @@ const SerialNumberEntryPage: React.FC = () => {
           .single();
 
         if (reqError) throw reqError;
+
+        if (requestData.status === 'Cancelled') {
+          setIsRequestCancelled(true);
+          showWarning('Cancelled Request', 'This item request is cancelled. Deliveries and serial processing cannot be recorded.');
+        }
 
         // Fetch latest serialization status from equipment table
         const itemCodes = requestData.request_items.map((i: any) => i.item_code);
@@ -651,10 +657,11 @@ const SerialNumberEntryPage: React.FC = () => {
               </button>
               <button 
                 onClick={handleSubmit}
-                disabled={isSubmitting || totalSerialsEntered < totalSerialsNeeded || [...entries, ...nonSerializedItems].some(item => (item.quantity || item.newDeliveryQty || 0) > (item.requestedQty - item.previousReceivedQty)) || [...entries, ...nonSerializedItems].every(item => (item.quantity || item.newDeliveryQty || 0) === 0)}
+                disabled={isRequestCancelled || isSubmitting || totalSerialsEntered < totalSerialsNeeded || [...entries, ...nonSerializedItems].some(item => (item.quantity || item.newDeliveryQty || 0) > (item.requestedQty - item.previousReceivedQty)) || [...entries, ...nonSerializedItems].every(item => (item.quantity || item.newDeliveryQty || 0) === 0)}
                 className={`bg-[#FE4E02] hover:bg-[#E04502] text-white rounded-2xl font-black shadow-xl shadow-[#FE4E02]/30 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 uppercase tracking-widest ${
                   isScrolled ? 'text-xs px-5 py-2' : 'text-sm px-8 py-3.5'
                 }`}
+                title={isRequestCancelled ? "Deliveries cannot be saved for cancelled requests" : ""}
               >
                 {isSubmitting ? <Loader2 size={isScrolled ? 16 : 20} className="animate-spin" /> : <CheckCircle2 size={isScrolled ? 16 : 20} />}
                 <span className="hidden sm:inline">Complete Entry</span>

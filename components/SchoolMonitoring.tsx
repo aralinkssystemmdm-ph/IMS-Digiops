@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   Search, Plus, Trash2, Edit3, ChevronDown, ChevronUp, Loader2, 
   Calendar, FileText, ShoppingCart, Truck, School, User, 
-  Settings, CheckCircle2, AlertCircle, X, Layers, Bell, ClipboardList, AppWindow, Play
+  Settings, CheckCircle2, AlertCircle, X, Layers, Bell, ClipboardList, AppWindow, Play,
+  Download, Box, Package, PackageCheck
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { toTitleCase, getProgramBadgeClass } from '../lib/utils';
@@ -24,9 +25,12 @@ interface SchoolMonitoringRecord {
   target_deployment_date: string;
   status: number; // 1 to 7
   status_dates: Record<number, string>; // status step -> Date string
+  item_received_status?: 'Partial' | 'Delivered' | null;
   items: DesignatedHardwareItem[];
   created_at?: string;
   updated_at?: string;
+  school_monitoring_id?: string;
+  type_of_document?: string;
 }
 
 interface SchoolOption {
@@ -43,13 +47,13 @@ interface InventoryOption {
 }
 
 const STATUS_STEPS = [
-  { step: 1, label: 'Received initial Document', icon: FileText },
-  { step: 2, label: 'Received latest Document', icon: Layers },
-  { step: 3, label: 'Creation of Item request', icon: ClipboardList },
-  { step: 4, label: 'Received Item Request by Admin', icon: Bell },
-  { step: 5, label: 'Purchased Order by Admin', icon: ShoppingCart },
-  { step: 6, label: 'In Transit', icon: Truck },
-  { step: 7, label: 'Delivered Date to School', icon: School }
+  { step: 1, label: 'Received Initial document', icon: FileText },
+  { step: 2, label: 'Received Latest document', icon: Layers },
+  { step: 3, label: 'Creation of item request', icon: ClipboardList },
+  { step: 4, label: 'Item Received', icon: Box },
+  { step: 5, label: 'Preparing Item', icon: Settings },
+  { step: 6, label: 'In transit', icon: Truck },
+  { step: 7, label: 'Delivered', icon: School }
 ];
 
 // Helper to format date into "DD MMM YYYY" (e.g. 02 May 2024)
@@ -127,13 +131,15 @@ const renderCustomStepIcon = (step: number, isActive: boolean) => {
     case 4:
       return (
         <div className="relative w-10 h-10 flex items-center justify-center">
-          <svg className={`w-8 h-8 ${isActive ? 'text-orange-550 dark:text-orange-500' : 'text-slate-300 dark:text-slate-700'}`} fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+          <svg className={`w-8 h-8 ${isActive ? 'text-orange-550 dark:text-orange-500' : 'text-slate-300 dark:text-slate-700'}`} fill="none" stroke="currentColor" strokeWidth="2.3" viewBox="0 0 24 24">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+            <line x1="12" y1="22.08" x2="12" y2="12" />
           </svg>
           {isActive && (
-            <div className="absolute bottom-0.5 right-0.5 bg-brand-orange text-white rounded-full p-[2px] border border-white dark:border-slate-900">
-              <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <div className="absolute bottom-0.5 right-0.5 bg-emerald-500 rounded-full p-[2px] border border-white dark:border-slate-900 flex items-center justify-center shadow-xs">
+              <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24">
+                <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
           )}
@@ -142,15 +148,15 @@ const renderCustomStepIcon = (step: number, isActive: boolean) => {
     case 5:
       return (
         <div className="relative w-10 h-10 flex items-center justify-center">
-          <svg className={`w-7.5 h-7.5 ${isActive ? 'text-orange-600' : 'text-slate-300 dark:text-slate-700'}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <circle cx="9" cy="21" r="1" fill="currentColor" />
-            <circle cx="20" cy="21" r="1" fill="currentColor" />
-            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          <svg className={`w-7.5 h-7.5 ${isActive ? 'text-orange-600' : 'text-slate-300 dark:text-slate-700'}`} fill="none" stroke="currentColor" strokeWidth="2.3" viewBox="0 0 24 24">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
           </svg>
           {isActive && (
-            <div className="absolute top-0 right-0 bg-emerald-500 rounded-full p-[2px] border border-white dark:border-slate-900 flex items-center justify-center">
-              <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" strokeWidth="4.5" viewBox="0 0 24 24">
-                <polyline points="20 6 9 17 4 12" />
+            <div className="absolute -top-0.5 -right-0.5 bg-brand-orange text-white rounded-full p-[2px] border border-white dark:border-slate-900 flex items-center justify-center shadow-xs">
+              <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
               </svg>
             </div>
           )}
@@ -186,7 +192,7 @@ const renderCustomStepIcon = (step: number, isActive: boolean) => {
 
 const MOCK_MONITORING_RECORDS: SchoolMonitoringRecord[] = [];
 
-export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMode = false }) => {
+export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: string | null }> = ({ isDarkMode = false, userRole = 'Staff' }) => {
   const { showSuccess, showError, showInfo } = useNotification();
   const [records, setRecords] = useState<SchoolMonitoringRecord[]>([]);
   const [schools, setSchools] = useState<SchoolOption[]>([]);
@@ -290,7 +296,15 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: ''
   });
   const [formItems, setFormItems] = useState<DesignatedHardwareItem[]>([]);
+  const [schoolMonitoringId, setSchoolMonitoringId] = useState('');
+  const [typeOfDocument, setTypeOfDocument] = useState<'MOA' | 'Addendum' | 'AQL' | ''>('');
   const [bundlesForProgram, setBundlesForProgram] = useState<{ name: string; items: { item_code: string; item_name: string; quantity: number }[] }[]>([]);
+
+  // Search and filter states
+  const [equipmentSearchQuery, setEquipmentSearchQuery] = useState('');
+  const [showEquipmentSuggestions, setShowEquipmentSuggestions] = useState(false);
+  const [selectedProgramFilter, setSelectedProgramFilter] = useState('ALL');
+  const [selectedSalesTeamFilter, setSelectedSalesTeamFilter] = useState('ALL');
 
   // Multiplier modal states for bundle dispatch
   const [isMultiplierModalOpen, setIsMultiplierModalOpen] = useState(false);
@@ -487,19 +501,53 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
 
     // Evaluate item requests (database queries)
     let creationDateVal = '';
+    let itemReceivedDateVal = '';
+    let itemReceivedStatusVal: 'Partial' | 'Delivered' | null = null;
     if (isSupabaseConfigured) {
       try {
-        const { data, error } = await supabase
-          .from('item_requests')
-          .select('control_no, date, created_at')
-          .eq('school_name', schoolName)
-          .not('status', 'in', '("Deleted","Rejected")')
-          .order('date', { ascending: false })
-          .limit(1);
+        const matchedRecord = records.find(r => r.school_name.trim().toLowerCase() === schoolName.trim().toLowerCase());
+        const targetSMId = matchedRecord?.school_monitoring_id || schoolMonitoringId;
 
-        if (!error && data && data.length > 0) {
-          // Use req date or format created_at date
-          creationDateVal = data[0].date || data[0].created_at?.split('T')[0] || '';
+        let query = supabase
+          .from('item_requests')
+          .select('id, control_no, date, created_at, school_monitoring_id, status')
+          .not('status', 'in', '("Deleted","Rejected","Cancelled")')
+          .order('date', { ascending: false });
+
+        if (targetSMId) {
+          query = query.or(`school_monitoring_id.eq."${targetSMId}",school_name.eq."${schoolName}"`);
+        } else {
+          query = query.eq('school_name', schoolName);
+        }
+
+        const { data: irData, error } = await query;
+
+        if (!error && irData && irData.length > 0) {
+          // Step 3: Creation date
+          creationDateVal = irData[0].date || irData[0].created_at?.split('T')[0] || '';
+
+          // Step 4: Check delivery transactions for 1st delivered date & partial / delivered status
+          const controlNos = irData.map(ir => ir.control_no || ir.id).filter(Boolean);
+          if (controlNos.length > 0) {
+            const { data: txs } = await supabase
+              .from('stock_transactions')
+              .select('id, reference_id, created_at, date')
+              .in('reference_id', controlNos)
+              .eq('transaction_type', 'Delivery')
+              .order('created_at', { ascending: true });
+
+            if (txs && txs.length > 0) {
+              itemReceivedDateVal = txs[0].date || txs[0].created_at?.split('T')[0] || '';
+              const allDelivered = irData.every(ir => ir.status === 'Delivered');
+              itemReceivedStatusVal = allDelivered ? 'Delivered' : 'Partial';
+            } else {
+              const anyDeliveredIR = irData.find(ir => ir.status === 'Partially Delivered' || ir.status === 'Delivered');
+              if (anyDeliveredIR) {
+                itemReceivedDateVal = anyDeliveredIR.date || anyDeliveredIR.created_at?.split('T')[0] || '';
+                itemReceivedStatusVal = anyDeliveredIR.status === 'Delivered' ? 'Delivered' : 'Partial';
+              }
+            }
+          }
         }
       } catch (e) {
         console.warn('Item request query for automation failed:', e);
@@ -511,6 +559,9 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
       const updated = { ...prev };
       if (creationDateVal) {
         updated[3] = creationDateVal;
+      }
+      if (itemReceivedDateVal) {
+        updated[4] = itemReceivedDateVal;
       }
       if (transitDateVal) {
         updated[6] = transitDateVal;
@@ -525,12 +576,13 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     setCurrentStatus(prev => {
       if (deliveredDateVal) return 7;
       if (transitDateVal) return 6;
+      if (itemReceivedDateVal) return Math.max(prev, 4);
       if (creationDateVal) return Math.max(prev, 3);
       return prev;
     });
 
-    if (creationDateVal || transitDateVal || deliveredDateVal) {
-      showInfo('AI Automation', `Synchronized real-time status dates: ${creationDateVal ? 'Item Request (Step 3)' : ''} ${transitDateVal ? 'Transit (Step 6)' : ''} ${deliveredDateVal ? 'Delivered (Step 7)' : ''}`);
+    if (creationDateVal || itemReceivedDateVal || transitDateVal || deliveredDateVal) {
+      showInfo('AI Automation', `Synchronized real-time status dates: ${creationDateVal ? 'Item Request (Step 3)' : ''} ${itemReceivedDateVal ? 'Item Received (Step 4)' : ''} ${transitDateVal ? 'Transit (Step 6)' : ''} ${deliveredDateVal ? 'Delivered (Step 7)' : ''}`);
     }
   };
 
@@ -650,7 +702,10 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
               status_dates: typeof row.status_dates === 'string' 
                 ? JSON.parse(row.status_dates) 
                 : (row.status_dates || { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' }),
-              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+              item_received_status: row.item_received_status || null,
+              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+              school_monitoring_id: row.school_monitoring_id || '',
+              type_of_document: row.type_of_document || ''
             }));
 
             monitoringData = dbRecords;
@@ -663,91 +718,175 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
         }
       }
 
+      // 3b. Fetch all active item requests and delivery transactions to sync school_monitoring stage 3 & 4
+      let itemRequestsList: any[] = [];
+      let deliveryTransactionsList: any[] = [];
+      if (isSupabaseConfigured) {
+        try {
+          const { data: irData } = await supabase
+            .from('item_requests')
+            .select('id, control_no, school_monitoring_id, date, created_at, school_name, status')
+            .not('status', 'in', '("Deleted","Rejected","Cancelled")');
+          if (irData) {
+            itemRequestsList = irData;
+          }
+        } catch (e) {
+          console.warn('Failed to fetch item requests for sync:', e);
+        }
+
+        try {
+          const { data: stData } = await supabase
+            .from('stock_transactions')
+            .select('id, reference_id, transaction_type, quantity, created_at, date')
+            .eq('transaction_type', 'Delivery')
+            .order('created_at', { ascending: true });
+          if (stData) {
+            deliveryTransactionsList = stData;
+          }
+        } catch (e) {
+          console.warn('Failed to fetch stock transactions for sync:', e);
+        }
+      }
+
       setRecords(monitoringData);
 
-      // Sync in-memory records with the newest DR receipts status & dates
+      // Sync in-memory records with newest DR receipts status & dates AND item requests stage 3 date & stage 4 item received
       let hasSyncChanges = false;
       try {
         const drLocal = localStorage.getItem('aralinks_delivery_receipts');
-        if (drLocal) {
-          const receipts = JSON.parse(drLocal) as any[];
-          monitoringData = monitoringData.map(record => {
-            const schoolName = record.school_name;
-            if (!schoolName) return record;
-            
+        const receipts = drLocal ? JSON.parse(drLocal) as any[] : [];
+
+        monitoringData = monitoringData.map(record => {
+          const schoolName = record.school_name;
+          let recordChanged = false;
+          let highestStatus = record.status;
+          let targetDeploymentDate = record.target_deployment_date;
+          let itemReceivedStatus = record.item_received_status || null;
+          const updatedDates = { ...record.status_dates };
+
+          // 1. Match by school_monitoring_id or school_name in item_requests
+          const matchedIRs = itemRequestsList.filter(ir => {
+            const matchId = record.school_monitoring_id && ir.school_monitoring_id && 
+              ir.school_monitoring_id.trim().toUpperCase() === record.school_monitoring_id.trim().toUpperCase();
+            const matchName = schoolName && ir.school_name &&
+              ir.school_name.trim().toLowerCase() === schoolName.trim().toLowerCase();
+            return matchId || matchName;
+          });
+
+          if (matchedIRs.length > 0) {
+            // Step 3: Creation of item request
+            const latestIR = matchedIRs.reduce((latest, current) => {
+              const currentFullDate = current.date || current.created_at?.split('T')[0] || '';
+              const latestFullDate = latest.date || latest.created_at?.split('T')[0] || '';
+              return (!latestFullDate || currentFullDate > latestFullDate) ? current : latest;
+            }, matchedIRs[0]);
+
+            const creationDateVal = latestIR.date || latestIR.created_at?.split('T')[0] || '';
+            if (creationDateVal && updatedDates[3] !== creationDateVal) {
+              updatedDates[3] = creationDateVal;
+              highestStatus = Math.max(highestStatus, 3);
+              recordChanged = true;
+            }
+
+            // Step 4: Item Received (based on item request receivable / delivery transactions)
+            const controlNos = matchedIRs.map(ir => ir.control_no || ir.id).filter(Boolean);
+            const matchedTxs = deliveryTransactionsList.filter(tx => controlNos.includes(tx.reference_id));
+
+            let firstDeliveredDate = '';
+
+            if (matchedTxs.length > 0) {
+              firstDeliveredDate = matchedTxs[0].date || matchedTxs[0].created_at?.split('T')[0] || '';
+              const allDelivered = matchedIRs.every(ir => ir.status === 'Delivered');
+              itemReceivedStatus = allDelivered ? 'Delivered' : 'Partial';
+            } else {
+              const anyDeliveredIR = matchedIRs.find(ir => ir.status === 'Partially Delivered' || ir.status === 'Delivered');
+              if (anyDeliveredIR) {
+                firstDeliveredDate = anyDeliveredIR.date || anyDeliveredIR.created_at?.split('T')[0] || '';
+                itemReceivedStatus = anyDeliveredIR.status === 'Delivered' ? 'Delivered' : 'Partial';
+              }
+            }
+
+            if (firstDeliveredDate && updatedDates[4] !== firstDeliveredDate) {
+              updatedDates[4] = firstDeliveredDate;
+              highestStatus = Math.max(highestStatus, 4);
+              recordChanged = true;
+            }
+            if (itemReceivedStatus && record.item_received_status !== itemReceivedStatus) {
+              recordChanged = true;
+            }
+          }
+
+          // 2. Match by delivery receipts
+          if (schoolName) {
             const schoolReceipts = receipts.filter(r => 
               r.schoolName && r.schoolName.trim().toLowerCase() === schoolName.trim().toLowerCase()
             );
             
-            if (schoolReceipts.length === 0) return record;
-            
-            let inTransitDate = '';
-            let deliveredDate = '';
-            let highestStatus = record.status;
-            
-            const transitDRs = schoolReceipts.filter(r => r.status === 'In Transit' || r.status === 'Partially Delivered');
-            if (transitDRs.length > 0) {
-              highestStatus = Math.max(highestStatus, 6);
-              const latestTransit = transitDRs.reduce((latest, r) => {
-                const curDate = r.inTransitDate || r.date || '';
-                return (!latest || curDate > latest) ? curDate : latest;
-              }, '');
-              if (latestTransit) inTransitDate = latestTransit;
-            }
-            
-            const deliveredDRs = schoolReceipts.filter(r => r.status === 'Delivered');
-            if (deliveredDRs.length > 0) {
-              highestStatus = Math.max(highestStatus, 7);
-              const latestDelivered = deliveredDRs.reduce((latest, r) => {
-                const curDate = r.deliveredDate || r.date || '';
-                return (!latest || curDate > latest) ? curDate : latest;
-              }, '');
-              if (latestDelivered) deliveredDate = latestDelivered;
-            }
-            
-            const updatedDates = { ...record.status_dates };
-            let recordChanged = false;
-            let targetDeploymentDate = record.target_deployment_date;
-
-            const latestTargetDR = schoolReceipts
-              .filter((r: any) => r.targetDeliveryDate)
-              .reduce((latest: any, r: any) => (!latest || r.date > latest.date) ? r : latest, null as any);
-
-            if (latestTargetDR && latestTargetDR.targetDeliveryDate && record.target_deployment_date !== latestTargetDR.targetDeliveryDate) {
-              targetDeploymentDate = latestTargetDR.targetDeliveryDate;
-              recordChanged = true;
-            }
-
-            if (highestStatus >= 6 && inTransitDate && updatedDates[6] !== inTransitDate) {
-              updatedDates[6] = inTransitDate;
-              recordChanged = true;
-            }
-            if (highestStatus >= 7 && deliveredDate && updatedDates[7] !== deliveredDate) {
-              updatedDates[7] = deliveredDate;
-              recordChanged = true;
-            }
-            if (highestStatus !== record.status) {
-              recordChanged = true;
-              if (highestStatus >= 6 && !updatedDates[6]) {
-                updatedDates[6] = inTransitDate || new Date().toISOString().split('T')[0];
+            if (schoolReceipts.length > 0) {
+              let inTransitDate = '';
+              let deliveredDate = '';
+              
+              const transitDRs = schoolReceipts.filter(r => r.status === 'In Transit' || r.status === 'Partially Delivered');
+              if (transitDRs.length > 0) {
+                highestStatus = Math.max(highestStatus, 6);
+                const latestTransit = transitDRs.reduce((latest, r) => {
+                  const curDate = r.inTransitDate || r.date || '';
+                  return (!latest || curDate > latest) ? curDate : latest;
+                }, '');
+                if (latestTransit) inTransitDate = latestTransit;
               }
-              if (highestStatus >= 7 && !updatedDates[7]) {
-                updatedDates[7] = deliveredDate || new Date().toISOString().split('T')[0];
+              
+              const deliveredDRs = schoolReceipts.filter(r => r.status === 'Delivered');
+              if (deliveredDRs.length > 0) {
+                highestStatus = Math.max(highestStatus, 7);
+                const latestDelivered = deliveredDRs.reduce((latest, r) => {
+                  const curDate = r.deliveredDate || r.date || '';
+                  return (!latest || curDate > latest) ? curDate : latest;
+                }, '');
+                if (latestDelivered) deliveredDate = latestDelivered;
+              }
+
+              const latestTargetDR = schoolReceipts
+                .filter((r: any) => r.targetDeliveryDate)
+                .reduce((latest: any, r: any) => (!latest || r.date > latest.date) ? r : latest, null as any);
+
+              if (latestTargetDR && latestTargetDR.targetDeliveryDate && record.target_deployment_date !== latestTargetDR.targetDeliveryDate) {
+                targetDeploymentDate = latestTargetDR.targetDeliveryDate;
+                recordChanged = true;
+              }
+
+              if (highestStatus >= 6 && inTransitDate && updatedDates[6] !== inTransitDate) {
+                updatedDates[6] = inTransitDate;
+                recordChanged = true;
+              }
+              if (highestStatus >= 7 && deliveredDate && updatedDates[7] !== deliveredDate) {
+                updatedDates[7] = deliveredDate;
+                recordChanged = true;
+              }
+              if (highestStatus !== record.status) {
+                recordChanged = true;
+                if (highestStatus >= 6 && !updatedDates[6]) {
+                  updatedDates[6] = inTransitDate || new Date().toISOString().split('T')[0];
+                }
+                if (highestStatus >= 7 && !updatedDates[7]) {
+                  updatedDates[7] = deliveredDate || new Date().toISOString().split('T')[0];
+                }
               }
             }
-            
-            if (recordChanged) {
-              hasSyncChanges = true;
-              return {
-                ...record,
-                target_deployment_date: targetDeploymentDate,
-                status: highestStatus,
-                status_dates: updatedDates
-              };
-            }
-            return record;
-          });
-        }
+          }
+          
+          if (recordChanged || highestStatus !== record.status) {
+            hasSyncChanges = true;
+            return {
+              ...record,
+              target_deployment_date: targetDeploymentDate,
+              status: highestStatus,
+              status_dates: updatedDates,
+              item_received_status: itemReceivedStatus
+            };
+          }
+          return record;
+        });
       } catch (err) {
         console.warn('Error during auto-sync of monitoring data:', err);
       }
@@ -769,7 +908,10 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                 target_deployment_date: rec.target_deployment_date,
                 status: rec.status,
                 status_dates: rec.status_dates,
+                item_received_status: rec.item_received_status || null,
                 items: rec.items,
+                school_monitoring_id: rec.school_monitoring_id || null,
+                type_of_document: rec.type_of_document || null,
                 updated_at: new Date().toISOString()
               };
               supabase
@@ -814,6 +956,8 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
             status: rec.status,
             status_dates: rec.status_dates,
             items: rec.items,
+            school_monitoring_id: rec.school_monitoring_id || null,
+            type_of_document: rec.type_of_document || null,
             updated_at: new Date().toISOString()
           };
           
@@ -840,7 +984,9 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
               status_dates: typeof dbRow.status_dates === 'string' 
                 ? JSON.parse(dbRow.status_dates) 
                 : (dbRow.status_dates || { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' }),
-              items: typeof dbRow.items === 'string' ? JSON.parse(dbRow.items) : (dbRow.items || [])
+              items: typeof dbRow.items === 'string' ? JSON.parse(dbRow.items) : (dbRow.items || []),
+              school_monitoring_id: dbRow.school_monitoring_id || '',
+              type_of_document: dbRow.type_of_document || ''
             };
             
             // Update this record in updatedLocalRecords
@@ -898,7 +1044,9 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
       }]);
     }
     setSelectedHardwareToAdd('');
+    setEquipmentSearchQuery('');
     setHardwareQtyToAdd(1);
+    setShowEquipmentSuggestions(false);
     showSuccess('Added successfully', `Designated hardware item added to list`);
   };
 
@@ -920,6 +1068,17 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     }
     return [];
   }, [bundlesForProgram, program]);
+
+  // Computed check for duplicate school monitoring ID
+  const isDuplicateMonitoringId = useMemo(() => {
+    const trimmed = (schoolMonitoringId || '').trim().toLowerCase();
+    if (!trimmed) return false;
+    return records.some(r => {
+      if (editingRecord && r.id === editingRecord.id) return false;
+      const rId = (r.school_monitoring_id || '').trim().toLowerCase();
+      return rId === trimmed;
+    });
+  }, [schoolMonitoringId, records, editingRecord]);
 
   // Apply batch bundle dispatch without stock restrictions
   const applyBundleBatch = (bundleName: string, multiplier: number = 1) => {
@@ -960,6 +1119,25 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     setFormItems(formItems.filter(item => item.item_code !== code));
   };
 
+  const generateSchoolMonitoringId = (existingRecords: SchoolMonitoringRecord[]) => {
+    let maxNum = 0;
+    existingRecords.forEach(r => {
+      const id = (r.school_monitoring_id || r.id || '').trim();
+      const match = id.match(/ARAL-IMS-2026-(\d+)/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    });
+    let nextNum = Math.max(maxNum + 1, existingRecords.length + 1);
+    while (existingRecords.some(r => (r.school_monitoring_id || '').trim().toLowerCase() === `aral-ims-2026-${String(nextNum).padStart(4, '0')}`.toLowerCase())) {
+      nextNum++;
+    }
+    return `ARAL-IMS-2026-${String(nextNum).padStart(4, '0')}`;
+  };
+
   // Handle Open Create Form
   const openCreateForm = () => {
     setEditingRecord(null);
@@ -972,11 +1150,14 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     setClassOpening('');
     setTargetDeploymentDate('');
     setCurrentStatus(1);
+    setEquipmentSearchQuery('');
     const today = getTodayString();
     setStatusDates({
       1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: ''
     });
     setFormItems([]);
+    setSchoolMonitoringId(generateSchoolMonitoringId(records));
+    setTypeOfDocument('');
     setIsFormOpen(true);
   };
 
@@ -993,8 +1174,11 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     setClassOpening(record.class_opening);
     setTargetDeploymentDate(record.target_deployment_date);
     setCurrentStatus(record.status);
+    setEquipmentSearchQuery('');
     setStatusDates({ ...record.status_dates });
     setFormItems([...record.items]);
+    setSchoolMonitoringId(record.school_monitoring_id || generateSchoolMonitoringId(records));
+    setTypeOfDocument((record.type_of_document as any) || '');
     setIsFormOpen(true);
     automateStages(record.school_name);
   };
@@ -1063,6 +1247,22 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
       showError('Form invalid', 'Please select a School name');
       return;
     }
+    const finalSMId = (schoolMonitoringId || '').trim();
+    if (!finalSMId) {
+      showError('Form invalid', 'Please enter a valid School Monitoring ID');
+      return;
+    }
+
+    const isDuplicate = records.some(r => {
+      if (editingRecord && r.id === editingRecord.id) return false;
+      return (r.school_monitoring_id || '').trim().toLowerCase() === finalSMId.toLowerCase();
+    });
+
+    if (isDuplicate) {
+      showError('Duplicate ID', `School Monitoring ID "${finalSMId}" is already used in existing records. Do not save with duplicate IDs.`);
+      return;
+    }
+
     if (formItems.length === 0) {
       showError('Form invalid', 'Please designate at least one hardware item');
       return;
@@ -1097,6 +1297,8 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
               status: currentStatus,
               status_dates: finalStatusDates,
               items: formItems,
+              school_monitoring_id: finalSMId,
+              type_of_document: typeOfDocument,
               updated_at: new Date().toISOString()
             };
             return targetRecord;
@@ -1117,6 +1319,8 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
           status: currentStatus,
           status_dates: finalStatusDates,
           items: formItems,
+          school_monitoring_id: finalSMId,
+          type_of_document: typeOfDocument,
           created_at: new Date().toISOString()
         };
         targetRecord = newRecord;
@@ -1151,11 +1355,39 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
     return map;
   }, [records]);
 
+  // Get unique programs dynamically from records
+  const uniquePrograms = useMemo(() => {
+    const set = new Set<string>();
+    records.forEach(r => {
+      if (r.program) {
+        set.add(r.program.trim());
+      }
+    });
+    return Array.from(set).sort();
+  }, [records]);
+
+  // Get unique sales teams dynamically from records
+  const uniqueSalesTeams = useMemo(() => {
+    const set = new Set<string>();
+    records.forEach(r => {
+      if (r.sales_team) {
+        set.add(r.sales_team.trim());
+      }
+    });
+    return Array.from(set).sort();
+  }, [records]);
+
   // Filter list
   const filteredRecords = useMemo(() => {
     let result = records;
     if (selectedStatusFilter !== null) {
       result = result.filter(r => r.status === selectedStatusFilter);
+    }
+    if (selectedProgramFilter !== 'ALL') {
+      result = result.filter(r => r.program === selectedProgramFilter);
+    }
+    if (selectedSalesTeamFilter !== 'ALL') {
+      result = result.filter(r => r.sales_team === selectedSalesTeamFilter);
     }
     if (!searchQuery) return result;
     const query = searchQuery.toLowerCase();
@@ -1165,7 +1397,83 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
       r.customer_code.toLowerCase().includes(query) ||
       r.sales_team.toLowerCase().includes(query)
     );
-  }, [records, searchQuery, selectedStatusFilter]);
+  }, [records, searchQuery, selectedStatusFilter, selectedProgramFilter, selectedSalesTeamFilter]);
+
+  // Filtered equipment catalog items
+  const filteredEquipment = useMemo(() => {
+    if (!equipmentSearchQuery) return equipment;
+    const q = equipmentSearchQuery.toLowerCase();
+    return equipment.filter(eq => 
+      eq.item_name.toLowerCase().includes(q) || 
+      eq.item_code.toLowerCase().includes(q)
+    );
+  }, [equipment, equipmentSearchQuery]);
+
+  const exportToExcel = () => {
+    const STATUS_LABELS: Record<number, string> = {
+      1: 'Received Initial document',
+      2: 'Received Latest document',
+      3: 'Creation of item request',
+      4: 'Item Received',
+      5: 'Preparing Item',
+      6: 'In transit',
+      7: 'Delivered'
+    };
+
+    const headers = [
+      'Customer Code',
+      'School Name',
+      'Program',
+      'Sales Team',
+      'Class Opening',
+      'Target Deployment Date',
+      'Current Status Stage',
+      'Status Label',
+      'Hardware Assets'
+    ];
+
+    const rows = filteredRecords.map(r => {
+      const statusLabel = STATUS_LABELS[r.status] || `Stage ${r.status}`;
+      const assetsString = r.items && r.items.length > 0
+        ? r.items.map(item => `${item.item_name} (Code: ${item.item_code}, Qty: ${item.quantity})`).join('; ')
+        : 'None';
+      
+      return [
+        r.customer_code || '',
+        r.school_name || '',
+        r.program || '',
+        r.sales_team || '',
+        r.class_opening ? formatStepDate(r.class_opening) : '',
+        r.target_deployment_date ? formatStepDate(r.target_deployment_date) : '',
+        r.status,
+        statusLabel,
+        assetsString
+      ];
+    });
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(val => {
+        const str = String(val).replace(/"/g, '""');
+        return str.includes(',') || str.includes('\n') || str.includes('"') ? `"${str}"` : str;
+      }).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `school_distribution_summary_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showSuccess('Export Successful', 'School distribution summary exported to Excel (CSV) format');
+  };
+
+  const exportToPDF = () => {
+    window.print();
+  };
 
   return (
     <div className="w-full h-full flex flex-col overflow-auto p-4 lg:p-6 text-slate-800 dark:text-slate-100 font-sans">
@@ -1179,13 +1487,15 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
           </h1>
         </div>
         
-        <button
-          onClick={openCreateForm}
-          className="px-4 py-2 bg-brand-orange text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 active:scale-95 transition-all flex items-center gap-1.5 self-start md:self-auto cursor-pointer"
-        >
-          <Plus size={15} strokeWidth={3} />
-          Monitor New School
-        </button>
+        {userRole !== 'Staff' && (
+          <button
+            onClick={openCreateForm}
+            className="px-4 py-2 bg-brand-orange text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 active:scale-95 transition-all flex items-center gap-1.5 self-start md:self-auto cursor-pointer"
+          >
+            <Plus size={15} strokeWidth={3} />
+            Monitor New School
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -1297,18 +1607,91 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
             </div>
           </div>
           
-          {/* SEARCH BAR */}
-          <div className="relative w-full max-w-md">
-            <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-              <Search size={16} />
-            </span>
-            <input
-              type="text"
-              placeholder="Search school name, customer code, or sales team..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border-slate-200 dark:border-slate-800 border bg-white dark:bg-slate-900 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-brand-orange text-slate-800 dark:text-white"
-            />
+          {/* SEARCH, FILTER AND EXPORT CONTROLS */}
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-805">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 flex-1">
+              
+              {/* Search input */}
+              <div className="relative flex-1 max-w-xs min-w-[200px]">
+                <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
+                  <Search size={14} />
+                </span>
+                <input
+                  type="text"
+                  placeholder="Search name, code, team..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 border-slate-200 dark:border-slate-800 border bg-white dark:bg-slate-900 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-brand-orange text-slate-800 dark:text-white"
+                />
+              </div>
+
+              {/* Program filter dropdown */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider whitespace-nowrap">Program:</span>
+                <select
+                  value={selectedProgramFilter}
+                  onChange={(e) => setSelectedProgramFilter(e.target.value)}
+                  className="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 rounded-xl p-2 text-xs text-slate-850 dark:text-white focus:outline-none focus:ring-1 focus:ring-brand-orange"
+                >
+                  <option value="ALL">All Programs</option>
+                  {uniquePrograms.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sales Team filter dropdown */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider whitespace-nowrap">Sales Team:</span>
+                <select
+                  value={selectedSalesTeamFilter}
+                  onChange={(e) => setSelectedSalesTeamFilter(e.target.value)}
+                  className="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 rounded-xl p-2 text-xs text-slate-850 dark:text-white focus:outline-none focus:ring-1 focus:ring-brand-orange max-w-[150px]"
+                >
+                  <option value="ALL">All Sales Teams</option>
+                  {uniqueSalesTeams.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Clear filters button if active */}
+              {(selectedProgramFilter !== 'ALL' || selectedSalesTeamFilter !== 'ALL') && (
+                <button
+                  onClick={() => {
+                    setSelectedProgramFilter('ALL');
+                    setSelectedSalesTeamFilter('ALL');
+                  }}
+                  className="text-[10.5px] font-black text-brand-orange hover:underline uppercase tracking-wider self-center whitespace-nowrap"
+                >
+                  Clear ×
+                </button>
+              )}
+
+            </div>
+
+            {/* Export buttons */}
+            <div className="flex items-center gap-3.5 shrink-0 self-end xl:self-auto">
+              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Export Summary:</span>
+              
+              <button
+                onClick={exportToExcel}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-550 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-xs cursor-pointer hover:opacity-95"
+                title="Download Excel / CSV"
+              >
+                <Download size={13} strokeWidth={2.5} />
+                Excel (CSV)
+              </button>
+
+              <button
+                onClick={exportToPDF}
+                className="px-3.5 py-2 bg-rose-600 hover:bg-rose-550 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-xs cursor-pointer hover:opacity-95"
+                title="Download / Print PDF"
+              >
+                <FileText size={13} strokeWidth={2.5} />
+                PDF
+              </button>
+            </div>
           </div>
 
           {/* MAIN MONITORING TABLE */}
@@ -1317,6 +1700,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">School Monitoring ID</th>
                     <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Customer Code</th>
                     <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">School Name</th>
                     <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Program</th>
@@ -1344,11 +1728,17 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                             isSelected ? 'bg-amber-500/[0.04] dark:bg-brand-orange/5' : ''
                           }`}
                         >
+                          <td className="px-5 py-4 text-xs font-bold font-mono text-brand-orange dark:text-brand-orange/90 whitespace-nowrap">
+                            {record.school_monitoring_id || 'Not assigned'}
+                          </td>
                           <td className="px-5 py-4 text-xs font-bold font-mono text-slate-500 dark:text-slate-400">
                             {record.customer_code}
                           </td>
                           <td className="px-5 py-4 text-sm font-extrabold text-slate-800 dark:text-slate-100">
-                            {record.school_name}
+                            <div>{record.school_name}</div>
+                            <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 font-bold mt-0.5">
+                              ID: {record.school_monitoring_id || 'Not assigned'}
+                            </div>
                           </td>
                           <td className="px-5 py-4 text-xs">
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${getProgramColor(record.program)}`}>
@@ -1370,11 +1760,18 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                             className="px-5 py-4 min-w-[200px]" 
                             onClick={(e) => {
                               e.stopPropagation();
-                              openStatusEditModal(record);
+                              if (userRole !== 'Staff') {
+                                openStatusEditModal(record);
+                              }
                             }}
                           >
-                            <div className="flex items-center gap-2 group/status cursor-pointer animate-fade-in" title="Click to view/update full interactive timeline">
-                              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-brand-orange/10 text-brand-orange border border-indigo-500/10 hover:bg-brand-orange hover:text-white transition-all shadow-xs group-hover/status:scale-102">
+                            <div 
+                              className={`flex items-center gap-2 animate-fade-in ${userRole !== 'Staff' ? 'group/status cursor-pointer' : 'cursor-default'}`} 
+                              title={userRole !== 'Staff' ? "Click to view/update full interactive timeline" : "Deployment Status"}
+                            >
+                              <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-brand-orange/10 text-brand-orange border border-indigo-500/10 shadow-xs transition-all ${
+                                userRole !== 'Staff' ? 'hover:bg-brand-orange hover:text-white group-hover/status:scale-102' : ''
+                              }`}>
                                 <span className="w-5.5 h-5.5 rounded-full bg-brand-orange text-white flex items-center justify-center text-[10px] font-black shadow-xs">
                                   {record.status}
                                 </span>
@@ -1388,21 +1785,31 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                           {/* Action cell */}
                           <td className="px-5 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-center gap-1.5">
+                              {userRole !== 'Staff' && (
+                                <>
+                                  <button
+                                    onClick={(e) => openEditForm(record, e)}
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-500/15 transition-all cursor-pointer"
+                                    title="Edit parameters"
+                                  >
+                                    <Edit3 size={13} />
+                                  </button>
+                                  <button
+                                    onClick={(e) => handleDeleteRecord(record.id, e)}
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-500/15 transition-all cursor-pointer"
+                                    title="Remove and archive"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </>
+                              )}
                               <button
-                                onClick={(e) => openEditForm(record, e)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-500/15 transition-all"
-                                title="Edit parameters"
+                                onClick={() => setSelectedRecordId(isSelected ? null : record.id)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-brand-orange transition-all cursor-pointer"
+                                title={isSelected ? "Collapse Details" : "View Details"}
                               >
-                                <Edit3 size={13} />
+                                {isSelected ? <ChevronUp size={14} className="text-brand-orange" /> : <ChevronDown size={14} className="text-slate-400" />}
                               </button>
-                              <button
-                                onClick={(e) => handleDeleteRecord(record.id, e)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-500/15 transition-all"
-                                title="Remove and archive"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                              {isSelected ? <ChevronUp size={14} className="text-brand-orange" /> : <ChevronDown size={14} className="text-slate-400" />}
                             </div>
                           </td>
                         </tr>
@@ -1410,7 +1817,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                         {/* Expandable designated items details and step tracker (REFER TO IMAGE TIMELINE) */}
                         {isSelected && (
                           <tr>
-                            <td colSpan={7} className="px-6 py-5 bg-slate-50/60 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-800">
+                            <td colSpan={9} className="px-6 py-5 bg-slate-50/60 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-800">
                               <div className="space-y-6">
                                 
                                 {/* 7-STEP REPLICA VISUAL TIMELINE FROM THE USER IMAGE */}
@@ -1522,6 +1929,14 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                                       </h4>
                                     </div>
                                     <div>
+                                      <span className="text-[10px] uppercase text-slate-450 font-black">School Monitoring ID</span>
+                                      <p className="font-mono font-bold text-slate-800 dark:text-slate-200">{record.school_monitoring_id || 'Not assigned'}</p>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] uppercase text-slate-450 font-black">Type of Document</span>
+                                      <p className="font-bold text-brand-orange">{record.type_of_document || 'None Selected'}</p>
+                                    </div>
+                                    <div>
                                       <span className="text-[10px] uppercase text-slate-450 font-black">Customer ID Reference</span>
                                       <p className="font-mono font-bold text-slate-800 dark:text-slate-200">{record.customer_code}</p>
                                     </div>
@@ -1553,7 +1968,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                   })}
                   {filteredRecords.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="text-center p-8 text-sm italic text-slate-400">
+                      <td colSpan={9} className="text-center p-8 text-sm italic text-slate-400">
                         No matches found.
                       </td>
                     </tr>
@@ -1776,6 +2191,66 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                       />
                     </div>
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                    {/* School Monitoring ID */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-black text-slate-400 uppercase tracking-wide">
+                          School Monitoring ID <span className="text-brand-orange">*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setSchoolMonitoringId(generateSchoolMonitoringId(records))}
+                          className="text-[10.5px] text-brand-orange hover:underline font-bold transition-all cursor-pointer flex items-center gap-1"
+                          title="Generate new unique ID"
+                        >
+                          Auto Generate
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="e.g. ARAL-IMS-2026-0001"
+                        value={schoolMonitoringId}
+                        onChange={(e) => setSchoolMonitoringId(e.target.value)}
+                        className={`w-full border p-2 text-sm font-mono font-bold rounded-lg focus:outline-none transition-all ${
+                          isDuplicateMonitoringId
+                            ? 'border-rose-500 bg-rose-50/20 text-rose-600 dark:text-rose-400 focus:ring-1 focus:ring-rose-500'
+                            : 'border-slate-200 dark:border-slate-850 bg-white dark:bg-slate-900 text-slate-800 dark:text-white focus:ring-1 focus:ring-brand-orange'
+                        }`}
+                      />
+                      {isDuplicateMonitoringId && (
+                        <span className="text-[10.5px] text-rose-500 font-bold flex items-center gap-1 mt-0.5">
+                          <AlertCircle size={12} className="shrink-0" />
+                          ID already exists in database. Duplicate IDs cannot be saved.
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Type of Document */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-black text-slate-400 uppercase tracking-wide">Type of Document</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['MOA', 'Addendum', 'AQL'].map((docType) => {
+                          const isSelected = typeOfDocument === docType;
+                          return (
+                            <button
+                              key={docType}
+                              type="button"
+                              onClick={() => setTypeOfDocument(docType as any)}
+                              className={`py-2 px-3 text-xs font-black rounded-lg border transition-all text-center cursor-pointer ${
+                                isSelected
+                                  ? 'bg-brand-orange text-white border-transparent shadow'
+                                  : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                              }`}
+                            >
+                              {docType}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1836,20 +2311,82 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
 
                     {/* Select stock tool */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                      <div className="sm:col-span-8 flex flex-col gap-1">
-                        <label className="text-[11px] font-black text-slate-400 uppercase tracking-wide">Equipment Catalog Items</label>
-                        <select
-                          value={selectedHardwareToAdd}
-                          onChange={(e) => setSelectedHardwareToAdd(e.target.value)}
-                          className="w-full border border-slate-200 dark:border-slate-850 bg-white dark:bg-slate-900 rounded-lg p-2 text-sm focus:outline-none text-slate-850 dark:text-white"
-                        >
-                          <option value="">-- Choose equipment item --</option>
-                          {equipment.map(eq => (
-                            <option key={eq.item_code} value={eq.item_code}>
-                              {eq.item_name} ({eq.item_code})
-                            </option>
-                          ))}
-                        </select>
+                      <div className="sm:col-span-8 flex flex-col gap-1 relative text-left">
+                        <label className="text-[11px] font-black text-slate-400 uppercase tracking-wide">
+                          Equipment Catalog Items <span className="text-[9px] font-bold text-brand-orange">(Type to search name or code)</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Search catalog by description or code..."
+                            value={equipmentSearchQuery}
+                            onFocus={() => setShowEquipmentSuggestions(true)}
+                            onChange={(e) => {
+                              setEquipmentSearchQuery(e.target.value);
+                              if (selectedHardwareToAdd) {
+                                setSelectedHardwareToAdd('');
+                              }
+                            }}
+                            className="w-full border border-slate-200 dark:border-slate-850 bg-white dark:bg-slate-900 rounded-lg p-2.5 pr-10 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-brand-orange text-slate-800 dark:text-white"
+                          />
+                          <div className="absolute right-2.5 top-3 flex items-center gap-1.5 text-slate-400">
+                            {equipmentSearchQuery || selectedHardwareToAdd ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEquipmentSearchQuery('');
+                                  setSelectedHardwareToAdd('');
+                                  setShowEquipmentSuggestions(false);
+                                }}
+                                className="hover:text-red-500 transition-colors p-0.5 cursor-pointer"
+                              >
+                                <X size={13} strokeWidth={2.5} />
+                              </button>
+                            ) : (
+                              <Search size={13} />
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Dropdown Suggestions List */}
+                        {showEquipmentSuggestions && (
+                          <>
+                            <div 
+                              className="fixed inset-0 z-40 bg-transparent" 
+                              onClick={() => setShowEquipmentSuggestions(false)} 
+                            />
+                            <div className="absolute top-[100%] left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800/80 animate-in fade-in zoom-in-95 duration-100 custom-scrollbar">
+                              {filteredEquipment.length === 0 ? (
+                                <div className="p-3.5 text-xs text-slate-400 italic">
+                                  No matching catalog items found
+                                </div>
+                              ) : (
+                                filteredEquipment.map(eq => {
+                                  const isSelected = selectedHardwareToAdd === eq.item_code;
+                                  return (
+                                    <button
+                                      key={eq.item_code}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedHardwareToAdd(eq.item_code);
+                                        setEquipmentSearchQuery(`${eq.item_name} (${eq.item_code})`);
+                                        setShowEquipmentSuggestions(false);
+                                      }}
+                                      className={`w-full text-left px-4 py-2.5 text-xs transition-all flex flex-col gap-0.5 hover:bg-brand-orange/5 ${
+                                        isSelected 
+                                          ? 'bg-brand-orange/10 text-brand-orange font-bold' 
+                                          : 'text-slate-700 dark:text-slate-300'
+                                      }`}
+                                    >
+                                      <span className="font-extrabold line-clamp-2">{eq.item_name}</span>
+                                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Code: {eq.item_code}</span>
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       <div className="sm:col-span-2 flex flex-col gap-1">
@@ -1870,7 +2407,12 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                         <button
                           type="button"
                           onClick={addHardwareItem}
-                          className="w-full py-2 bg-brand-orange text-white text-xs font-black uppercase tracking-wider rounded-lg hover:opacity-90 transition-all cursor-pointer text-center"
+                          disabled={!selectedHardwareToAdd}
+                          className={`w-full py-2.5 text-white text-xs font-black uppercase tracking-wider rounded-lg transition-all text-center ${
+                            selectedHardwareToAdd 
+                              ? 'bg-brand-orange hover:opacity-90 cursor-pointer' 
+                              : 'bg-slate-300 dark:bg-slate-850 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                          }`}
                         >
                           Add Hardware
                         </button>
@@ -1937,7 +2479,22 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                 {formStep < 2 ? (
                   <button
                     type="button"
-                    onClick={() => setFormStep(prev => prev + 1)}
+                    onClick={() => {
+                      if (!selectedSchoolName) {
+                        showError('Form invalid', 'Please select a School name');
+                        return;
+                      }
+                      const trimmedId = (schoolMonitoringId || '').trim();
+                      if (!trimmedId) {
+                        showError('Form invalid', 'Please enter a School Monitoring ID');
+                        return;
+                      }
+                      if (isDuplicateMonitoringId) {
+                        showError('Duplicate ID', `School Monitoring ID "${trimmedId}" already exists. Please use a unique ID.`);
+                        return;
+                      }
+                      setFormStep(prev => prev + 1);
+                    }}
                     className="px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-slate-750 hover:opacity-90 transition-all cursor-pointer"
                   >
                     Next Step
@@ -1946,8 +2503,12 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                   <button
                     type="button"
                     onClick={handleSaveRecord}
-                    disabled={saving}
-                    className="px-5 py-2 bg-brand-orange text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all flex items-center gap-1.5 cursor-pointer"
+                    disabled={saving || isDuplicateMonitoringId || !schoolMonitoringId.trim()}
+                    className={`px-5 py-2 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                      isDuplicateMonitoringId || !schoolMonitoringId.trim()
+                        ? 'bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60'
+                        : 'bg-brand-orange hover:opacity-90 cursor-pointer'
+                    }`}
                   >
                     {saving ? (
                       <>
@@ -2165,141 +2726,43 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                       const isCurrent = st.step === modalStatus;
                       const stepDate = modalStatusDates[st.step];
 
-                      // Custom Step Icon matching user's image precisely
-                      const customIcon = (() => {
-                        switch (st.step) {
-                          case 1:
-                            return (
-                              <div className="relative w-10 h-10 flex items-center justify-center">
-                                <svg className={`w-8 h-8 ${isActive ? 'text-amber-500' : 'text-slate-300'}`} fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
-                                </svg>
-                                <div className={`absolute top-1 left-2.5 w-3.5 h-3 bg-white border ${isActive ? 'border-amber-400' : 'border-slate-200'} rounded-[1.5px] flex flex-col justify-around p-[2px] rotate-6`}>
-                                  <div className={`h-[1px] w-full ${isActive ? 'bg-amber-300' : 'bg-slate-200'}`} />
-                                  <div className={`h-[1px] w-2/3 ${isActive ? 'bg-amber-300' : 'bg-slate-200'}`} />
-                                </div>
-                                {isActive && (
-                                  <div className="absolute bottom-0 right-0 bg-emerald-500 rounded-full p-[1.5px] border border-white dark:border-slate-900 shadow-xs">
-                                    <CheckCircle2 size={8} className="text-white" />
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          case 2:
-                            return (
-                              <div className="relative w-10 h-10 flex items-center justify-center">
-                                <svg className={`w-8 h-8 ${isActive ? 'text-amber-500' : 'text-slate-300'}`} fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
-                                </svg>
-                                <div className={`absolute top-1 left-2.5 w-3.5 h-3 bg-white border ${isActive ? 'border-amber-400' : 'border-slate-200'} rounded-[1.5px] flex flex-col justify-around p-[2px] -rotate-6`}>
-                                  <div className={`h-[1px] w-full ${isActive ? 'bg-amber-300' : 'bg-slate-200'}`} />
-                                  <div className={`h-[1px] w-2/3 ${isActive ? 'bg-amber-300' : 'bg-slate-200'}`} />
-                                </div>
-                                {isActive && (
-                                  <div className="absolute bottom-0 right-0 bg-emerald-500 rounded-full p-[1.5px] border border-white dark:border-slate-900 shadow-xs flex items-center justify-center">
-                                    <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-                                      <circle cx="12" cy="12" r="10" />
-                                      <polyline points="12 6 12 12 16 14" />
-                                    </svg>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          case 3:
-                            return (
-                              <div className="relative w-10 h-10 flex items-center justify-center">
-                                <svg className={`w-7 h-7.5 ${isActive ? 'text-orange-500' : 'text-slate-300'}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                  <rect x="8" y="2" width="8" height="4" rx="1" ry="1" fill={isActive ? '#FF5C00' : '#CBD5E1'} />
-                                  <line x1="8" y1="10" x2="16" y2="10" />
-                                  <line x1="8" y1="14" x2="16" y2="14" />
-                                </svg>
-                                {isActive && (
-                                  <div className="absolute bottom-0.5 right-1.5 bg-brand-orange text-white rounded-full w-3.5 h-3.5 flex items-center justify-center border border-white dark:border-slate-900 text-[9px] font-black">
-                                    +
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          case 4:
-                            return (
-                              <div className="relative w-10 h-10 flex items-center justify-center">
-                                <svg className={`w-8 h-8 ${isActive ? 'text-orange-500' : 'text-slate-300'}`} fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-                                </svg>
-                                {isActive && (
-                                  <div className="absolute bottom-0.5 right-0.5 bg-brand-orange text-white rounded-full p-[2px] border border-white dark:border-slate-900">
-                                    <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-                                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                                    </svg>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          case 5:
-                            return (
-                              <div className="relative w-10 h-10 flex items-center justify-center">
-                                <svg className={`w-7.5 h-7.5 ${isActive ? 'text-orange-600' : 'text-slate-300'}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                  <circle cx="9" cy="21" r="1" fill="currentColor" />
-                                  <circle cx="20" cy="21" r="1" fill="currentColor" />
-                                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-                                </svg>
-                                {isActive && (
-                                  <div className="absolute top-0 right-0 bg-emerald-500 rounded-full p-[2px] border border-white dark:border-slate-900 flex items-center justify-center">
-                                    <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" strokeWidth="4.5" viewBox="0 0 24 24">
-                                      <polyline points="20 6 9 17 4 12" />
-                                    </svg>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          case 6:
-                            return (
-                              <div className="relative w-10 h-10 flex items-center justify-center">
-                                <svg className={`w-8 h-8 ${isActive ? 'text-orange-500' : 'text-slate-300'}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                  <rect x="1" y="3" width="13" height="13" />
-                                  <polygon points="14 8 18 8 21 11 21 16 14 16" />
-                                  <circle cx="17" cy="18" r="2.2" />
-                                  <circle cx="5" cy="18" r="2.2" />
-                                </svg>
-                              </div>
-                            );
-                          case 7:
-                            return (
-                              <div className="relative w-11 h-11 flex items-center justify-center">
-                                <svg className={`w-8.5 h-8.5 ${isActive ? 'text-orange-500' : 'text-slate-300'}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                  <path d="M22 10v11H2V10l10-6 10 6z" />
-                                  <path d="M6 12h4v8H6z" />
-                                  <path d="M14 12h4v8h-4z" />
-                                  <line x1="12" y1="4" x2="12" y2="7" />
-                                  <polygon points="12 4 15 5.5 12 7" fill={isActive ? '#FF5C00' : 'none'} />
-                                </svg>
-                              </div>
-                            );
-                          default:
-                            return null;
-                        }
-                      })();
+                      // Custom Step Icon from unified renderer
+                      const customIcon = renderCustomStepIcon(st.step, isActive);
+
+                      const isAutomated = st.step === 3 || st.step === 4 || st.step === 6 || st.step === 7;
 
                       return (
                         <div 
                           key={st.step} 
                           onClick={() => {
+                            if (isAutomated) {
+                              showInfo('Automated Stage', `${st.label} (Step ${st.step}) is synchronized automatically and cannot be modified manually.`);
+                              return;
+                            }
                             setModalStatus(st.step);
                             if (!modalStatusDates[st.step]) {
                               setModalStatusDates(prev => ({ ...prev, [st.step]: getTodayString() }));
                             }
                           }}
-                          className="flex flex-col items-center text-center w-[12%] shrink-0 group/col cursor-pointer hover:-translate-y-1 transition-all duration-350 select-none"
+                          className={`flex flex-col items-center text-center w-[12%] shrink-0 group/col transition-all duration-350 select-none ${
+                            isAutomated ? 'cursor-not-allowed opacity-80' : 'cursor-pointer hover:-translate-y-1'
+                          }`}
                         >
                           {/* Top circle number tag */}
-                          <span className={`text-[10px] font-black mb-2.5 w-5 h-5 rounded-full flex items-center justify-center border font-mono transition-transform duration-300 ${
-                            isActive 
-                              ? 'bg-brand-orange text-white border-brand-orange scale-110 shadow-xs' 
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'
-                          }`}>
-                            {st.step}
-                          </span>
+                          <div className="flex flex-col items-center gap-1 mb-2">
+                            <span className={`text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border font-mono transition-transform duration-300 ${
+                              isActive 
+                                ? 'bg-brand-orange text-white border-brand-orange scale-110 shadow-xs' 
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'
+                            }`}>
+                              {st.step}
+                            </span>
+                            {isAutomated && (
+                              <span className="text-[7.5px] font-black uppercase text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-1 py-0.2 rounded tracking-wider leading-none shrink-0">
+                                Auto
+                              </span>
+                            )}
+                          </div>
 
                           {/* Big Circle with specific custom styled SVG */}
                           <div className={`w-15 h-15 rounded-full flex items-center justify-center transition-all duration-350 relative shadow-xs bg-white dark:bg-slate-900 border ${
@@ -2344,6 +2807,19 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                           }`}>
                             {stepDate ? formatStepDate(stepDate) : 'Not Reached'}
                           </div>
+
+                          {/* Step 4 Partial / Delivered status badge */}
+                          {st.step === 4 && isActive && (stepDate || activeStatusEditRecord?.item_received_status) && (
+                            <div className="mt-1">
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+                                (activeStatusEditRecord?.item_received_status === 'Delivered' || modalStatus >= 7)
+                                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                  : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                              }`}>
+                                {activeStatusEditRecord?.item_received_status || (modalStatus >= 7 ? 'Delivered' : 'Partial')}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -2365,10 +2841,11 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                       const updatedDates = { ...modalStatusDates };
                       const today = getTodayString();
                       for (let i = 1; i <= modalStatus; i++) {
+                        if (i === 3 || i === 4 || i === 6 || i === 7) continue; // Skip automated steps
                         if (!updatedDates[i]) updatedDates[i] = today;
                       }
                       setModalStatusDates(updatedDates);
-                      showInfo('Auto-filled current date', 'Dates populated for attained steps');
+                      showInfo('Auto-filled current date', 'Dates populated for attained non-automated steps');
                     }}
                     className="text-[10px] font-black text-indigo-550 dark:text-indigo-400 hover:underline uppercase tracking-wider"
                   >
@@ -2379,6 +2856,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
                   {STATUS_STEPS.map((col) => {
                     const isReached = col.step <= modalStatus;
+                    const isAutomated = col.step === 3 || col.step === 4 || col.step === 6 || col.step === 7;
                     return (
                       <div 
                         key={col.step} 
@@ -2388,22 +2866,30 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                             : 'bg-slate-50/50 dark:bg-slate-950/10 border-slate-100 dark:border-slate-900 opacity-50'
                         }`}
                       >
-                        <div className="flex items-center gap-1.5">
-                          <span className={`w-4 h-4 rounded-full flex items-center justify-center font-bold text-[9px] font-mono leading-none ${
-                            isReached ? 'bg-orange-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-400'
-                          }`}>
-                            {col.step}
-                          </span>
-                          <span className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide truncate" title={col.label}>
-                            {col.label}
-                          </span>
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <span className={`w-4 h-4 rounded-full flex items-center justify-center font-bold text-[9px] font-mono leading-none ${
+                              isReached ? 'bg-orange-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-400'
+                            }`}>
+                              {col.step}
+                            </span>
+                            <span className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide truncate" title={col.label}>
+                              {col.label}
+                            </span>
+                          </div>
+                          {isAutomated && (
+                            <span className="text-[8px] font-black uppercase text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded tracking-widest leading-none shrink-0">
+                              Auto
+                            </span>
+                          )}
                         </div>
                         
                         <input
                           type="date"
-                          disabled={!isReached}
+                          disabled={!isReached || isAutomated}
                           value={modalStatusDates[col.step] || ''}
                           onChange={(e) => {
+                            if (isAutomated) return;
                             const val = e.target.value;
                             setModalStatusDates(prev => ({
                               ...prev,
@@ -2411,7 +2897,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
                             }));
                           }}
                           className={`w-full bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 rounded-lg p-1.5 text-[11px] text-slate-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-brand-orange ${
-                            !isReached ? 'bg-slate-100/50 dark:bg-slate-950 cursor-not-allowed' : 'font-semibold border-brand-orange/25'
+                            (!isReached || isAutomated) ? 'bg-slate-100/50 dark:bg-slate-950 cursor-not-allowed' : 'font-semibold border-brand-orange/25'
                           }`}
                         />
                       </div>
@@ -2444,6 +2930,93 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean }> = ({ isDarkMod
           </div>
         </div>
       )}
+
+      {/* PRINT-ONLY REPORT ELEMENT */}
+      <div className="hidden print:block print-report-container bg-white text-slate-900 p-8 font-sans w-full min-h-screen">
+        <div className="border-b-2 border-slate-900 pb-4 mb-6">
+          <h1 className="text-xl font-black uppercase tracking-wide text-slate-900">
+            Aralinks School Distribution & Monitoring Report
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Generated on {new Date().toLocaleDateString('en-US', { dateStyle: 'long' })}
+          </p>
+          <div className="flex gap-4 mt-2.5 text-[11px] font-bold text-slate-700">
+            <div>Program Filter: <span className="text-slate-900">{selectedProgramFilter}</span></div>
+            <div>Sales Team Filter: <span className="text-slate-900">{selectedSalesTeamFilter}</span></div>
+            <div>Active Stage: <span className="text-slate-900">{selectedStatusFilter !== null ? `Stage ${selectedStatusFilter}` : 'ALL'}</span></div>
+            <div>Total Records: <span className="text-slate-900">{filteredRecords.length}</span></div>
+          </div>
+        </div>
+
+        <table className="w-full border-collapse text-[11px]">
+          <thead>
+            <tr className="border-b-2 border-slate-400 text-left font-black uppercase tracking-wider text-slate-800">
+              <th className="py-2.5 pr-2">Customer Code</th>
+              <th className="py-2.5 px-2">School Name</th>
+              <th className="py-2.5 px-2">Program</th>
+              <th className="py-2.5 px-2">Sales Team</th>
+              <th className="py-2.5 px-2">Class Opening</th>
+              <th className="py-2.5 px-2">Target Date</th>
+              <th className="py-2.5 px-2">Status Stage</th>
+              <th className="py-2.5 pl-2">Assigned Hardware Assets</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {filteredRecords.map((r) => {
+              const STATUS_LABELS: Record<number, string> = {
+                1: 'Received Initial document',
+                2: 'Received Latest document',
+                3: 'Creation of item request',
+                4: 'Item Received',
+                5: 'Preparing Item',
+                6: 'In transit',
+                7: 'Delivered'
+              };
+              const statusLabel = STATUS_LABELS[r.status] || `Stage ${r.status}`;
+              const assetsList = r.items && r.items.length > 0
+                ? r.items.map(item => `${item.item_name} (x${item.quantity})`).join(', ')
+                : 'None';
+              return (
+                <tr key={r.id} className="align-top hover:bg-slate-50">
+                  <td className="py-2 pr-2 font-mono font-bold text-slate-700">{r.customer_code}</td>
+                  <td className="py-2 px-2 font-extrabold text-slate-900">{r.school_name}</td>
+                  <td className="py-2 px-2 font-semibold text-slate-700 uppercase">{r.program || 'OTHER'}</td>
+                  <td className="py-2 px-2 text-slate-700">{r.sales_team}</td>
+                  <td className="py-2 px-2 font-mono text-slate-700">{r.class_opening ? formatStepDate(r.class_opening) : '--'}</td>
+                  <td className="py-2 px-2 font-mono text-slate-700">{r.target_deployment_date ? formatStepDate(r.target_deployment_date) : '--'}</td>
+                  <td className="py-2 px-2 font-bold uppercase text-slate-900">{statusLabel} (S{r.status})</td>
+                  <td className="py-2 pl-2 text-slate-600 italic leading-relaxed">{assetsList}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {filteredRecords.length === 0 && (
+          <div className="py-8 text-center text-slate-400 italic">No records match current filters.</div>
+        )}
+      </div>
+
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          .print-report-container, .print-report-container * {
+            visibility: visible !important;
+          }
+          .print-report-container {
+            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            background: white !important;
+            color: black !important;
+            padding: 24px !important;
+          }
+        }
+      `}</style>
 
     </div>
   );

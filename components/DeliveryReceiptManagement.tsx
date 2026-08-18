@@ -54,6 +54,8 @@ export interface DeliveryReceiptItem {
 export interface DeliveryReceipt {
   id: string; // DR No.
   schoolName: string;
+  schoolMonitoringId?: string;
+  school_monitoring_id?: string;
   clientCode: string;
   agent: string;
   project: string;
@@ -194,9 +196,10 @@ const INITIAL_DR_DATA: DeliveryReceipt[] = [
 
 interface DeliveryReceiptManagementProps {
   isDarkMode?: boolean;
+  userRole?: string | null;
 }
 
-const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ isDarkMode = false }) => {
+const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ isDarkMode = false, userRole = 'Staff' }) => {
   const navigate = useNavigate();
   const { showInfo, showSuccess, showWarning } = useNotification();
 
@@ -284,6 +287,8 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
           const loaded: DeliveryReceipt[] = data.map((row: any) => ({
             id: row.id,
             schoolName: row.school_name,
+            schoolMonitoringId: row.school_monitoring_id,
+            school_monitoring_id: row.school_monitoring_id,
             clientCode: row.client_code,
             agent: row.agent,
             project: row.project,
@@ -844,17 +849,19 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                 Export
               </button>
               
-              <button
-                onClick={handleCreateDR}
-                className="px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider text-white shadow-lg active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90"
-                style={{
-                  backgroundColor: 'var(--brand-accent)',
-                  boxShadow: '0 4px 15px -3px color-mix(in srgb, var(--brand-accent), transparent 60%)'
-                }}
-              >
-                <Plus size={16} strokeWidth={2.5} />
-                Create Delivery Receipt
-              </button>
+              {userRole !== 'Staff' && (
+                <button
+                  onClick={handleCreateDR}
+                  className="px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider text-white shadow-lg active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90"
+                  style={{
+                    backgroundColor: 'var(--brand-accent)',
+                    boxShadow: '0 4px 15px -3px color-mix(in srgb, var(--brand-accent), transparent 60%)'
+                  }}
+                >
+                  <Plus size={16} strokeWidth={2.5} />
+                  Create Delivery Receipt
+                </button>
+              )}
             </div>
           }
         />
@@ -985,6 +992,7 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
             <thead>
               <tr className={`border-b ${isDarkMode ? 'bg-slate-800/40 border-slate-870' : 'bg-slate-50/70 border-slate-102'}`}>
                 <th className="px-6 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">DR No.</th>
+                <th className="px-6 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">School Monitoring ID</th>
                 <th className="px-6 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Date Created</th>
                 <th className="px-6 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">School name</th>
                 <th className="px-6 py-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Project</th>
@@ -1010,6 +1018,13 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                           {dr.id}
                         </span>
                       </div>
+                    </td>
+
+                    {/* School Monitoring ID */}
+                    <td className="px-6 py-4.5">
+                      <span className="font-mono text-xs font-bold text-slate-500 dark:text-slate-400">
+                        {dr.schoolMonitoringId || dr.school_monitoring_id || '-'}
+                      </span>
                     </td>
 
                     {/* Date Created */}
@@ -1103,7 +1118,7 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                         )}
 
                         {/* Ready for delivery -> display only icon status for in transit */}
-                        {dr.status === 'Ready for delivery' && (
+                        {userRole !== 'Staff' && dr.status === 'Ready for delivery' && (
                           <button
                             onClick={() => handleChangeStatus(dr.id, 'In Transit')}
                             className={`h-8 w-8 rounded-xl border transition-all hover:scale-105 cursor-pointer flex items-center justify-center shrink-0 ${
@@ -1118,7 +1133,7 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                         )}
 
                         {/* In Transit or Partially Delivered -> display icon status for mark as delivered */}
-                        {(dr.status === 'In Transit' || dr.status === 'Partially Delivered') && (
+                        {userRole !== 'Staff' && (dr.status === 'In Transit' || dr.status === 'Partially Delivered') && (
                           <button
                             onClick={() => handleChangeStatus(dr.id, 'Delivered')}
                             className={`h-8 w-8 rounded-xl border transition-all hover:scale-105 cursor-pointer flex items-center justify-center shrink-0 ${
@@ -1165,33 +1180,37 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                         )}
 
                         {/* Edit button */}
-                        <button
-                          onClick={() => handleEditDR(dr.id)}
-                          disabled={dr.status === 'Delivered' || dr.status === 'Partially Delivered'}
-                          className={`h-8 w-8 rounded-xl border transition-all hover:scale-105 flex items-center justify-center shrink-0 ${
-                            dr.status === 'Delivered' || dr.status === 'Partially Delivered'
-                              ? 'opacity-40 cursor-not-allowed border-transparent text-slate-400'
-                              : isDarkMode 
-                                ? 'bg-slate-950 border-slate-800 text-slate-350 hover:text-blue-400 hover:bg-slate-800 cursor-pointer' 
-                                : 'bg-white border-slate-150 text-slate-600 hover:text-blue-500 hover:bg-slate-50 cursor-pointer'
-                          }`}
-                          title={dr.status === 'Delivered' || dr.status === 'Partially Delivered' ? "Cannot edit processed deliveries" : "Edit template"}
-                        >
-                          <Edit3 size={15} />
-                        </button>
+                        {userRole !== 'Staff' && (
+                          <button
+                            onClick={() => handleEditDR(dr.id)}
+                            disabled={dr.status === 'Delivered' || dr.status === 'Partially Delivered'}
+                            className={`h-8 w-8 rounded-xl border transition-all hover:scale-105 flex items-center justify-center shrink-0 ${
+                              dr.status === 'Delivered' || dr.status === 'Partially Delivered'
+                                ? 'opacity-40 cursor-not-allowed border-transparent text-slate-400'
+                                : isDarkMode 
+                                  ? 'bg-slate-950 border-slate-800 text-slate-350 hover:text-blue-400 hover:bg-slate-800 cursor-pointer' 
+                                  : 'bg-white border-slate-150 text-slate-600 hover:text-blue-500 hover:bg-slate-50 cursor-pointer'
+                            }`}
+                            title={dr.status === 'Delivered' || dr.status === 'Partially Delivered' ? "Cannot edit processed deliveries" : "Edit template"}
+                          >
+                            <Edit3 size={15} />
+                          </button>
+                        )}
 
                         {/* Delete button */}
-                        <button
-                          onClick={() => handleDeleteDR(dr.id)}
-                          className={`h-8 w-8 rounded-xl border transition-all hover:scale-105 cursor-pointer flex items-center justify-center shrink-0 ${
-                            isDarkMode 
-                              ? 'bg-slate-950 border-slate-805 text-slate-400 hover:text-red-500 hover:bg-red-500/10' 
-                              : 'bg-white border-slate-150 text-slate-405 hover:text-red-550 hover:bg-red-50/80'
-                          }`}
-                          title="Delete"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        {userRole !== 'Staff' && (
+                          <button
+                            onClick={() => handleDeleteDR(dr.id)}
+                            className={`h-8 w-8 rounded-xl border transition-all hover:scale-105 cursor-pointer flex items-center justify-center shrink-0 ${
+                              isDarkMode 
+                                ? 'bg-slate-950 border-slate-805 text-slate-400 hover:text-red-500 hover:bg-red-500/10' 
+                                : 'bg-white border-slate-150 text-slate-405 hover:text-red-550 hover:bg-red-50/80'
+                            }`}
+                            title="Delete"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1318,12 +1337,20 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                   {/* Client information fields grid */}
                   <div className="grid grid-cols-12 gap-y-2 text-[10px] text-left mt-4 pb-4 border-b border-zinc-300">
                     
-                    <div className="col-span-12 sm:col-span-7 flex items-end pr-0 sm:pr-4">
-                      <span className="w-24 shrink-0 font-bold text-zinc-700">Delivered to</span>
-                      <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                      <span className="font-black text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
-                        {selectedDR.schoolName}
-                      </span>
+                    <div className="col-span-12 sm:col-span-7 flex flex-col pr-0 sm:pr-4 justify-end text-left">
+                      <div className="flex items-end">
+                        <span className="w-24 shrink-0 font-bold text-zinc-700">Delivered to</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-black text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
+                          {selectedDR.schoolName}
+                        </span>
+                      </div>
+                      {(selectedDR.schoolMonitoringId || selectedDR.school_monitoring_id) && (
+                        <div className="flex items-end mt-1 font-mono text-[9px] text-brand-orange pl-[102px]">
+                          <span className="font-bold text-zinc-500 mr-1.5">ID:</span>
+                          <span className="font-black text-zinc-900">{selectedDR.schoolMonitoringId || selectedDR.school_monitoring_id}</span>
+                        </div>
+                      )}
                     </div>
                     <div className="col-span-12 sm:col-span-5 flex items-end">
                       <span className="w-20 shrink-0 font-bold text-zinc-700">Client Code</span>
@@ -1574,19 +1601,21 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                     Export PDF
                   </button>
 
-                  <button
-                    onClick={() => handleEditDR(selectedDR.id)}
-                    disabled={selectedDR.status === 'Delivered' || selectedDR.status === 'Partially Delivered'}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all font-sans ${
-                      selectedDR.status === 'Delivered' || selectedDR.status === 'Partially Delivered'
-                        ? 'bg-slate-300 text-slate-500 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed opacity-50'
-                        : 'bg-brand-orange text-white hover:opacity-90 cursor-pointer active:scale-95'
-                    }`}
-                    title={selectedDR.status === 'Delivered' || selectedDR.status === 'Partially Delivered' ? "Cannot edit processed deliveries" : "Edit template"}
-                  >
-                    <Edit3 size={14} />
-                    Edit Record
-                  </button>
+                  {userRole !== 'Staff' && (
+                    <button
+                      onClick={() => handleEditDR(selectedDR.id)}
+                      disabled={selectedDR.status === 'Delivered' || selectedDR.status === 'Partially Delivered'}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all font-sans ${
+                        selectedDR.status === 'Delivered' || selectedDR.status === 'Partially Delivered'
+                          ? 'bg-slate-300 text-slate-500 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed opacity-50'
+                          : 'bg-brand-orange text-white hover:opacity-90 cursor-pointer active:scale-95'
+                      }`}
+                      title={selectedDR.status === 'Delivered' || selectedDR.status === 'Partially Delivered' ? "Cannot edit processed deliveries" : "Edit template"}
+                    >
+                      <Edit3 size={14} />
+                      Edit Record
+                    </button>
+                  )}
                 </div>
               </div>
             </motion.div>

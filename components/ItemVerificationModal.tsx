@@ -226,6 +226,7 @@ const ItemVerificationModal: React.FC<ItemVerificationModalProps> = ({
   if (!isOpen || !request) return null;
 
   const handleProceed = () => {
+    if (request.status === 'Cancelled') return;
     const selectedPO = selectedPOIndex !== null ? poList[selectedPOIndex] : null;
     const hasItems = selectedPO?.items && Object.keys(selectedPO.items).length > 0;
     
@@ -445,6 +446,13 @@ const ItemVerificationModal: React.FC<ItemVerificationModalProps> = ({
             >
               <ArrowRightLeft size={16} />
               <span>Proceed to Transfer</span>
+            </button>
+          ) : request.status === 'Cancelled' ? (
+            <button 
+              disabled
+              className="px-8 py-2.5 rounded-xl font-bold text-xs bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed uppercase tracking-widest"
+            >
+              <span>Delivery Disabled (Cancelled)</span>
             </button>
           ) : (
             <button 
