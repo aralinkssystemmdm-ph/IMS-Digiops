@@ -1644,13 +1644,6 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
                   <History size={14} />
                   <span>View History</span>
                 </button>
-                <button 
-                  onClick={() => handleInitiateCancel(req)}
-                  className="p-2 transition-all active:scale-95 rounded-md text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:text-slate-600 dark:hover:bg-rose-500/10 cursor-pointer"
-                  title="Cancel Request"
-                >
-                  <Ban size={18} />
-                </button>
               </div>
             ) : (
               <>
@@ -1728,14 +1721,16 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
                   );
                 })()}
 
-                {/* Cancel Request Button */}
-                <button 
-                  onClick={() => handleInitiateCancel(req)}
-                  className="p-2 transition-all active:scale-95 rounded-md text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:text-slate-600 dark:hover:bg-rose-500/10 cursor-pointer"
-                  title="Cancel Request"
-                >
-                  <Ban size={18} />
-                </button>
+                {/* Cancel Request Button - hidden if status is Partial or Delivered */}
+                {!isPartial && (
+                  <button 
+                    onClick={() => handleInitiateCancel(req)}
+                    className="p-2 transition-all active:scale-95 rounded-md text-gray-400 hover:text-rose-500 hover:bg-rose-50 dark:text-slate-600 dark:hover:bg-rose-500/10 cursor-pointer"
+                    title="Cancel Request"
+                  >
+                    <Ban size={18} />
+                  </button>
+                )}
                 
                 <button 
                   onClick={() => { setIsBulkDeleting(false); setRequestToDelete(req); setIsDeleteModalOpen(true); }}
@@ -2256,6 +2251,16 @@ const ItemsRequest: React.FC<ItemsRequestProps> = ({
   const formatDate = (dateStr: string | null | undefined) => {
     if (!dateStr) return 'N/A';
     try {
+      const match = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) {
+        const [, y, m, d] = match;
+        const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
+        return dateObj.toLocaleDateString('en-US', {
+          month: 'short',
+          day: '2-digit',
+          year: 'numeric'
+        });
+      }
       const date = new Date(dateStr);
       if (isNaN(date.getTime())) return 'N/A';
       return date.toLocaleDateString('en-US', { 

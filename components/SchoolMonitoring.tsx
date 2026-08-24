@@ -3,7 +3,7 @@ import {
   Search, Plus, Trash2, Edit3, ChevronDown, ChevronUp, Loader2, 
   Calendar, FileText, ShoppingCart, Truck, School, User, 
   Settings, CheckCircle2, AlertCircle, X, Layers, Bell, ClipboardList, AppWindow, Play,
-  Download, Box, Package, PackageCheck
+  Download, Box, Package, PackageCheck, ArrowDown, ArrowUp
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { toTitleCase, getProgramBadgeClass } from '../lib/utils';
@@ -297,7 +297,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
   });
   const [formItems, setFormItems] = useState<DesignatedHardwareItem[]>([]);
   const [schoolMonitoringId, setSchoolMonitoringId] = useState('');
-  const [typeOfDocument, setTypeOfDocument] = useState<'MOA' | 'Addendum' | 'AQL' | ''>('');
+  const [typeOfDocument, setTypeOfDocument] = useState<'MOA' | 'Addendum' | 'AQL' | 'IR' | ''>('');
   const [bundlesForProgram, setBundlesForProgram] = useState<{ name: string; items: { item_code: string; item_name: string; quantity: number }[] }[]>([]);
 
   // Search and filter states
@@ -305,6 +305,29 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
   const [showEquipmentSuggestions, setShowEquipmentSuggestions] = useState(false);
   const [selectedProgramFilter, setSelectedProgramFilter] = useState('ALL');
   const [selectedSalesTeamFilter, setSelectedSalesTeamFilter] = useState('ALL');
+
+  // Sorting state - default is descending for School Monitoring ID
+  type SortField = 
+    | 'school_monitoring_id' 
+    | 'customer_code' 
+    | 'school_name' 
+    | 'program' 
+    | 'sales_team' 
+    | 'class_opening' 
+    | 'target_deployment_date' 
+    | 'status';
+
+  const [sortField, setSortField] = useState<SortField>('school_monitoring_id');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection(field === 'school_monitoring_id' ? 'desc' : 'asc');
+    }
+  };
 
   // Multiplier modal states for bundle dispatch
   const [isMultiplierModalOpen, setIsMultiplierModalOpen] = useState(false);
@@ -1377,7 +1400,7 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
     return Array.from(set).sort();
   }, [records]);
 
-  // Filter list
+  // Filter and sort list
   const filteredRecords = useMemo(() => {
     let result = records;
     if (selectedStatusFilter !== null) {
@@ -1389,15 +1412,75 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
     if (selectedSalesTeamFilter !== 'ALL') {
       result = result.filter(r => r.sales_team === selectedSalesTeamFilter);
     }
-    if (!searchQuery) return result;
-    const query = searchQuery.toLowerCase();
-    return result.filter(r => 
-      r.school_name.toLowerCase().includes(query) ||
-      (r.program && r.program.toLowerCase().includes(query)) ||
-      r.customer_code.toLowerCase().includes(query) ||
-      r.sales_team.toLowerCase().includes(query)
-    );
-  }, [records, searchQuery, selectedStatusFilter, selectedProgramFilter, selectedSalesTeamFilter]);
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(r => 
+        (r.school_monitoring_id && r.school_monitoring_id.toLowerCase().includes(query)) ||
+        (r.school_name && r.school_name.toLowerCase().includes(query)) ||
+        (r.program && r.program.toLowerCase().includes(query)) ||
+        (r.customer_code && r.customer_code.toLowerCase().includes(query)) ||
+        (r.sales_team && r.sales_team.toLowerCase().includes(query))
+      );
+    }
+
+    // Sort records
+    return [...result].sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case 'school_monitoring_id': {
+          const valA = a.school_monitoring_id || a.id || '';
+          const valB = b.school_monitoring_id || b.id || '';
+          comparison = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+          break;
+        }
+        case 'customer_code': {
+          const valA = a.customer_code || '';
+          const valB = b.customer_code || '';
+          comparison = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+          break;
+        }
+        case 'school_name': {
+          const valA = a.school_name || '';
+          const valB = b.school_name || '';
+          comparison = valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+          break;
+        }
+        case 'program': {
+          const valA = a.program || '';
+          const valB = b.program || '';
+          comparison = valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+          break;
+        }
+        case 'sales_team': {
+          const valA = a.sales_team || '';
+          const valB = b.sales_team || '';
+          comparison = valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+          break;
+        }
+        case 'class_opening': {
+          const timeA = a.class_opening ? new Date(a.class_opening).getTime() : 0;
+          const timeB = b.class_opening ? new Date(b.class_opening).getTime() : 0;
+          comparison = timeA - timeB;
+          break;
+        }
+        case 'target_deployment_date': {
+          const timeA = a.target_deployment_date ? new Date(a.target_deployment_date).getTime() : 0;
+          const timeB = b.target_deployment_date ? new Date(b.target_deployment_date).getTime() : 0;
+          comparison = timeA - timeB;
+          break;
+        }
+        case 'status': {
+          const valA = Number(a.status) || 0;
+          const valB = Number(b.status) || 0;
+          comparison = valA - valB;
+          break;
+        }
+        default:
+          comparison = 0;
+      }
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [records, searchQuery, selectedStatusFilter, selectedProgramFilter, selectedSalesTeamFilter, sortField, sortDirection]);
 
   // Filtered equipment catalog items
   const filteredEquipment = useMemo(() => {
@@ -1700,14 +1783,126 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">School Monitoring ID</th>
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Customer Code</th>
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">School Name</th>
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Program</th>
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Sales Team</th>
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Class Opening</th>
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Target Date</th>
-                    <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider">Deployment Status</th>
+                    <th 
+                      onClick={() => handleSort('school_monitoring_id')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>School Monitoring ID</span>
+                        <div className={`transition-all duration-200 ${sortField === 'school_monitoring_id' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'school_monitoring_id' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('customer_code')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Customer Code</span>
+                        <div className={`transition-all duration-200 ${sortField === 'customer_code' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'customer_code' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('school_name')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>School Name</span>
+                        <div className={`transition-all duration-200 ${sortField === 'school_name' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'school_name' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('program')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Program</span>
+                        <div className={`transition-all duration-200 ${sortField === 'program' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'program' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('sales_team')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Sales Team</span>
+                        <div className={`transition-all duration-200 ${sortField === 'sales_team' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'sales_team' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('class_opening')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Class Opening</span>
+                        <div className={`transition-all duration-200 ${sortField === 'class_opening' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'class_opening' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('target_deployment_date')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Target Date</span>
+                        <div className={`transition-all duration-200 ${sortField === 'target_deployment_date' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'target_deployment_date' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('status')}
+                      className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-slate-200 transition-colors select-none group"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Deployment Status</span>
+                        <div className={`transition-all duration-200 ${sortField === 'status' ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortField === 'status' && sortDirection === 'desc' ? (
+                            <ArrowDown size={11} className="text-brand-orange" />
+                          ) : (
+                            <ArrowUp size={11} className="text-brand-orange" />
+                          )}
+                        </div>
+                      </div>
+                    </th>
                     <th className="px-5 py-3 text-[10px] font-black uppercase text-slate-450 tracking-wider text-center">Action</th>
                   </tr>
                 </thead>
@@ -2230,8 +2425,8 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
                     {/* Type of Document */}
                     <div className="flex flex-col gap-1">
                       <label className="text-[11px] font-black text-slate-400 uppercase tracking-wide">Type of Document</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {['MOA', 'Addendum', 'AQL'].map((docType) => {
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {['MOA', 'Addendum', 'AQL', 'IR'].map((docType) => {
                           const isSelected = typeOfDocument === docType;
                           return (
                             <button

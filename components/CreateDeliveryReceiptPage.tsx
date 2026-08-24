@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { syncSchoolMonitoringWithDRs } from './monitoringSync';
 import { 
   ArrowLeft, 
+  ArrowRight,
   Save, 
   Trash2, 
   Plus, 
@@ -26,7 +27,9 @@ import {
   X,
   FileCheck,
   ListPlus,
-  Compass
+  Compass,
+  Upload,
+  Image as ImageIcon
 } from 'lucide-react';
 import { useNotification } from './NotificationProvider';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -55,7 +58,7 @@ interface DRSignatory {
   name: string;
   date: string;
   signatureImage?: string; // Data URL
-  type: 'drawn' | 'typed' | 'pending';
+  type: 'drawn' | 'typed' | 'uploaded' | 'pending';
 }
 
 interface DeliveryReceiptData {
@@ -139,11 +142,20 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
   const [hardwareItems, setHardwareItems] = useState<DRHardwareItem[]>([]);
   const [serviceItems, setServiceItems] = useState<DRServiceItem[]>([]);
 
-  // Signatories
-  const [signatoryPrepared, setSignatoryPrepared] = useState<DRSignatory>({ name: 'Sarah Connor', date: '', type: 'typed' });
+  // Signatories - Prepared by defaults to 'Bianca Aguinaldo', Approved by defaults to 'Jerald Dela Cruz'
+  const [signatoryPrepared, setSignatoryPrepared] = useState<DRSignatory>({ name: 'Bianca Aguinaldo', date: '', type: 'typed' });
   const [signatoryApproved, setSignatoryApproved] = useState<DRSignatory>({ name: 'Jerald Dela Cruz', date: '', type: 'typed' });
-  const [signatoryDelivered, setSignatoryDelivered] = useState<DRSignatory>({ name: 'John Robert Pagala', date: '', type: 'typed' });
+  const [signatoryDelivered, setSignatoryDelivered] = useState<DRSignatory>({ name: '', date: '', type: 'typed' });
   const [signatoryCheckedReceived, setSignatoryCheckedReceived] = useState<DRSignatory>({ name: '', date: '', type: 'pending' });
+
+  // 2-Step Workflow state: Step 1 (Data Entry & Items), Step 2 (Document Print Preview & Publish)
+  const [currentStep, setCurrentStep] = useState<1 | 2>(1);
+
+  // Hidden File input refs for uploading e-signature images
+  const preparedFileInputRef = useRef<HTMLInputElement | null>(null);
+  const approvedFileInputRef = useRef<HTMLInputElement | null>(null);
+  const deliveredFileInputRef = useRef<HTMLInputElement | null>(null);
+  const checkedReceivedFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Autocomplete UI controllers
   const [schoolSearchQuery, setSchoolSearchQuery] = useState('');
@@ -247,6 +259,7 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
   const [equipmentList, setEquipmentList] = useState<any[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [schoolsList, setSchoolsList] = useState<any[]>([]);
+  const [bundleItemsCatalog, setBundleItemsCatalog] = useState<any[]>([]);
   const [availableBundles, setAvailableBundles] = useState<string[]>([]);
   const [isLoadingBundles, setIsLoadingBundles] = useState(false);
   const [isBundleDropdownOpen, setIsBundleDropdownOpen] = useState(false);
@@ -259,10 +272,10 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
   useEffect(() => {
     const today = new Date().toISOString().substring(0, 10);
     setDateOfAcceptance(today);
-    setSignatoryPrepared(prev => ({ ...prev, date: today }));
-    setSignatoryApproved(prev => ({ ...prev, date: today }));
-    setSignatoryDelivered(prev => ({ ...prev, date: today }));
-    setSignatoryCheckedReceived(prev => ({ ...prev, date: today }));
+    setSignatoryPrepared(prev => ({ ...prev, name: prev.name || 'Bianca Aguinaldo', date: today }));
+    setSignatoryApproved(prev => ({ ...prev, name: prev.name || 'Jerald Dela Cruz', date: today }));
+    setSignatoryDelivered(prev => ({ ...prev, date: '' }));
+    setSignatoryCheckedReceived(prev => ({ ...prev, name: '', date: '' }));
 
     // Generate random DR No in Create Mode
     if (!isEditMode) {
@@ -422,10 +435,11 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
           setEquipmentList(activeItems);
         }
 
-        // Fetch actual inventory summary and schools list concurrently
-        const [invRes, schoolsRes] = await Promise.all([
+        // Fetch actual inventory summary, schools list, and bundle items concurrently
+        const [invRes, schoolsRes, bundlesRes] = await Promise.all([
           supabase.from('view_inventory_summary').select('*'),
-          supabase.from('schools').select('name, customer_code, location, sales_team, is_buffer').order('name')
+          supabase.from('schools').select('name, customer_code, location, sales_team, is_buffer').order('name'),
+          supabase.from('bundle_items').select('bundle, item_code, description, program').is('archived_at', null)
         ]);
         
         if (invRes && invRes.data) {
@@ -433,6 +447,9 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
         }
         if (schoolsRes && schoolsRes.data) {
           setSchoolsList(schoolsRes.data);
+        }
+        if (bundlesRes && bundlesRes.data) {
+          setBundleItemsCatalog(bundlesRes.data);
         }
       } catch (err) {
         console.error('Error fetching database records:', err);
@@ -802,6 +819,238 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
+  const handleSignatureFileUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    targetKey: 'prepared' | 'approved' | 'delivered' | 'checkedReceived'
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showError('Invalid File Type', 'Please upload a valid image file (PNG, JPG, WebP, SVG).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showError('File Too Large', 'Signature image size must be under 5MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        const today = new Date().toISOString().substring(0, 10);
+        const updateSig = (prev: DRSignatory): DRSignatory => ({
+          ...prev,
+          signatureImage: dataUrl,
+          type: 'uploaded',
+          date: prev.date || today
+        });
+
+        if (targetKey === 'prepared') setSignatoryPrepared(updateSig);
+        else if (targetKey === 'approved') setSignatoryApproved(updateSig);
+        else if (targetKey === 'delivered') setSignatoryDelivered(updateSig);
+        else if (targetKey === 'checkedReceived') setSignatoryCheckedReceived(updateSig);
+
+        showSuccess('E-Signature Uploaded', 'Electronic signature image uploaded successfully.');
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleProceedToStep2 = () => {
+    if (!deliveredTo.trim()) {
+      showError('Validation Failed', 'Please search and select or input a School Client name before proceeding to print preview.');
+      return;
+    }
+
+    if (hardwareItems.length === 0) {
+      showError('Validation Failed', 'Please input at least one Hardware Item before proceeding to print preview.');
+      return;
+    }
+
+    // Validate Section 2: Hardware Delivered Items - Ensure stock availability and item catalog existence
+    for (let i = 0; i < hardwareItems.length; i++) {
+      const item = hardwareItems[i];
+      const desc = (item.description || '').trim();
+      if (!desc) {
+        showError('Validation Failed', `Section 2 Hardware Item #${i + 1} has no item description. Please select an item or remove the empty row.`);
+        return;
+      }
+
+      const itemCode = item.item_code || (() => {
+        const matched = resolvedInventoryItems.find(it => 
+          (it.item_name || '').toLowerCase() === desc.toLowerCase() ||
+          (it.item_code || '').toLowerCase() === desc.toLowerCase()
+        );
+        return matched?.item_code;
+      })();
+
+      const invItem = itemCode 
+        ? resolvedInventoryItems.find(it => it.item_code === itemCode) 
+        : resolvedInventoryItems.find(it => (it.item_name || '').toLowerCase() === desc.toLowerCase());
+
+      if (!invItem) {
+        showError(
+          'Item Not Found in Inventory',
+          `Cannot proceed to Print Preview: Hardware Item #${i + 1} "${desc}" was not found in the inventory catalog.`
+        );
+        return;
+      }
+
+      const availableStock = Number(invItem.total_quantity || 0);
+      const requestedQty = Number(item.qty || 0);
+
+      if (requestedQty <= 0) {
+        showError(
+          'Invalid Quantity',
+          `Cannot proceed to Print Preview: Hardware Item #${i + 1} "${desc}" must have a quantity of at least 1.`
+        );
+        return;
+      }
+
+      if (availableStock < requestedQty) {
+        showError(
+          'Insufficient Stock',
+          `Cannot proceed to Print Preview: Hardware Item #${i + 1} "${desc}" has insufficient stock! Available: ${availableStock}, Requested: ${requestedQty}.`
+        );
+        return;
+      }
+    }
+
+    setCurrentStep(2);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Helper to determine the bundle group type for pagination
+  const getItemBundleGroup = (item: DRHardwareItem): 'ARDUINO' | 'RASPBERRY' | 'COMBINED_STEM' | 'GENERAL' => {
+    const textToMatch = `${item.remarks || ''} ${item.description || ''} ${item.specifications || ''}`.toUpperCase();
+
+    // 1. Check for specific Bundle markers
+    if (textToMatch.includes('ARDUINO')) return 'ARDUINO';
+    if (textToMatch.includes('RASPBERRY')) return 'RASPBERRY';
+    if (
+      textToMatch.includes('LITTLE BITS') ||
+      textToMatch.includes('LITTLEBITS') ||
+      textToMatch.includes('MICRO:BIT') ||
+      textToMatch.includes('MICROBIT') ||
+      textToMatch.includes('MICRO BIT') ||
+      textToMatch.includes('MAKEY-MAKEY') ||
+      textToMatch.includes('MAKEY MAKEY') ||
+      textToMatch.includes('MAKEY') ||
+      textToMatch.includes('AF TOOLS') ||
+      textToMatch.includes('AF TOOL')
+    ) {
+      return 'COMBINED_STEM';
+    }
+
+    // 2. Lookup against loaded bundle_items catalog from database
+    if (bundleItemsCatalog && bundleItemsCatalog.length > 0) {
+      const match = bundleItemsCatalog.find((b: any) => {
+        if (item.item_code && b.item_code && String(b.item_code).trim().toLowerCase() === String(item.item_code).trim().toLowerCase()) {
+          return true;
+        }
+        if (item.description && b.description && String(b.description).trim().toLowerCase() === String(item.description).trim().toLowerCase()) {
+          return true;
+        }
+        return false;
+      });
+
+      if (match && match.bundle) {
+        const bName = String(match.bundle).toUpperCase();
+        if (bName.includes('ARDUINO')) return 'ARDUINO';
+        if (bName.includes('RASPBERRY')) return 'RASPBERRY';
+        if (
+          bName.includes('LITTLE BITS') ||
+          bName.includes('LITTLEBITS') ||
+          bName.includes('MICRO:BIT') ||
+          bName.includes('MICROBIT') ||
+          bName.includes('MICRO BIT') ||
+          bName.includes('MAKEY') ||
+          bName.includes('AF TOOLS') ||
+          bName.includes('AF TOOL')
+        ) {
+          return 'COMBINED_STEM';
+        }
+      }
+    }
+
+    return 'GENERAL';
+  };
+
+  // Group hardware items into paginated sheets based on bundle rules
+  const printPages = useMemo(() => {
+    if (hardwareItems.length === 0) return [];
+
+    const generalList: DRHardwareItem[] = [];
+    const arduinoList: DRHardwareItem[] = [];
+    const raspberryList: DRHardwareItem[] = [];
+    const combinedStemList: DRHardwareItem[] = [];
+
+    hardwareItems.forEach((item) => {
+      const g = getItemBundleGroup(item);
+      if (g === 'ARDUINO') arduinoList.push(item);
+      else if (g === 'RASPBERRY') raspberryList.push(item);
+      else if (g === 'COMBINED_STEM') combinedStemList.push(item);
+      else generalList.push(item);
+    });
+
+    const pages: { id: string; categoryTitle: string; pageLabel: string; items: DRHardwareItem[] }[] = [];
+
+    // General / non-STEM bundle items page (e.g. Tablets, Interactive Boards, Chargers)
+    if (generalList.length > 0) {
+      pages.push({
+        id: 'general',
+        categoryTitle: 'Hardware',
+        pageLabel: 'General Equipment',
+        items: generalList
+      });
+    }
+
+    // Separate page for ARDUINO
+    if (arduinoList.length > 0) {
+      pages.push({
+        id: 'arduino',
+        categoryTitle: 'Hardware — ARDUINO',
+        pageLabel: 'ARDUINO Bundle',
+        items: arduinoList
+      });
+    }
+
+    // Separate page for RASPBERRY
+    if (raspberryList.length > 0) {
+      pages.push({
+        id: 'raspberry',
+        categoryTitle: 'Hardware — RASPBERRY',
+        pageLabel: 'RASPBERRY Bundle',
+        items: raspberryList
+      });
+    }
+
+    // Same page for bundles LITTLE BITS, MICRO:BIT, MAKEY-MAKEY & AF TOOLS
+    if (combinedStemList.length > 0) {
+      pages.push({
+        id: 'combined_stem',
+        categoryTitle: 'Hardware — LITTLE BITS, MICRO:BIT, MAKEY-MAKEY & AF TOOLS',
+        pageLabel: 'STEM Toolkits (Little Bits, Micro:bit, Makey-Makey, AF Tools)',
+        items: combinedStemList
+      });
+    }
+
+    // Fallback if none of above
+    if (pages.length === 0) {
+      pages.push({
+        id: 'fallback',
+        categoryTitle: 'Hardware',
+        pageLabel: 'Hardware Items',
+        items: hardwareItems
+      });
+    }
+
+    return pages;
+  }, [hardwareItems, bundleItemsCatalog]);
+
   const saveSignatureDetails = (method: 'drawn' | 'typed') => {
     if (!drawingSignatoryKey) return;
     let dataUrlImage: string | undefined = undefined;
@@ -814,7 +1063,7 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
     }
 
     const sigUpdate: DRSignatory = {
-      name: typedSignName || 'Authorized Officer',
+      name: typedSignName,
       date: new Date().toISOString().substring(0, 10),
       signatureImage: dataUrlImage,
       type: method
@@ -892,8 +1141,8 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
         inTransitDate: status === 'In Transit' || status === 'Delivered' ? inTransitDate : undefined,
         deliveredDate: status === 'Delivered' ? deliveredDate : undefined,
         totalItems: computedTotalItems,
-        issuedBy: signatoryPrepared.name || 'Sarah Connor',
-        deliveredBy: signatoryDelivered.name || 'Courier Cargo',
+        issuedBy: signatoryPrepared.name || '',
+        deliveredBy: signatoryDelivered.name || '',
         receivedBy: signatoryCheckedReceived.name || '',
         remarks: remarks || '',
         // Full local metadata
@@ -935,8 +1184,8 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             in_transit_date: status === 'In Transit' || status === 'Delivered' ? inTransitDate : null,
             delivered_date: status === 'Delivered' ? deliveredDate : null,
             total_items: computedTotalItems,
-            issued_by: signatoryPrepared.name || 'Sarah Connor',
-            delivered_by: signatoryDelivered.name || 'Courier Cargo',
+            issued_by: signatoryPrepared.name || '',
+            delivered_by: signatoryDelivered.name || '',
             received_by: signatoryCheckedReceived.name || '',
             remarks: remarks || '',
             hardware_items: hardwareItems,
@@ -1102,6 +1351,9 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
               <span className="p-1 px-2.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-brand-orange/10 text-brand-orange border border-brand-orange/20">
                 {isEditMode ? 'Modify Mode' : 'New Form Draft'}
               </span>
+              <span className="text-[10px] font-bold text-slate-400">
+                {currentStep === 1 ? 'Step 1 of 2: Form Details & Items' : 'Step 2 of 2: Print Preview & Verification'}
+              </span>
             </div>
             <h1 className="text-xl font-black mt-1 leading-tight tracking-tight">
               {isEditMode ? `Edit Delivery Acceptance: ${drNo}` : 'Create Delivery Acceptance Form'}
@@ -1109,37 +1361,76 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Print preview toggle */}
-          <button
-            onClick={() => setIsPrintPreviewActive(!isPrintPreviewActive)}
-            className={`px-4 py-2.5 rounded-xl border text-[10px] font-black tracking-widest uppercase transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
-              isPrintPreviewActive
-                ? 'bg-brand-orange border-brand-orange text-white'
-                : isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-705 hover:bg-slate-50'
-            }`}
-          >
-            <Eye size={14} />
-            {isPrintPreviewActive ? 'Edit Interactive mode' : 'Form Print Preview'}
-          </button>
+        {/* WORKFLOW STEPPER CONTROLS */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Stepper tabs */}
+          <div className={`flex items-center p-1 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'}`}>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(1)}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentStep === 1
+                  ? 'bg-brand-orange text-white shadow-xs'
+                  : isDarkMode ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span className="w-4 h-4 rounded-full bg-white/20 text-[10px] flex items-center justify-center font-black">1</span>
+              <span>Form Details</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleProceedToStep2}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                currentStep === 2
+                  ? 'bg-brand-orange text-white shadow-xs'
+                  : isDarkMode ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span className="w-4 h-4 rounded-full bg-white/20 text-[10px] flex items-center justify-center font-black">2</span>
+              <span>Print Preview</span>
+            </button>
+          </div>
 
+          {/* Action button corresponding to active step */}
+          {currentStep === 1 ? (
+            <button
+              type="button"
+              onClick={handleProceedToStep2}
+              className="px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider text-white shadow-md active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90 bg-brand-orange"
+            >
+              <span>Proceed to Print Preview</span>
+              <ArrowRight size={15} strokeWidth={2.5} />
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className={`px-4 py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                  isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Printer size={14} />
+                <span>Print / Save PDF</span>
+              </button>
 
-
-          <button
-            onClick={handleSaveDeliveryReceipt}
-            className="px-5 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest text-white shadow-md active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90"
-            style={{ backgroundColor: 'var(--brand-accent)' }}
-          >
-            <Save size={14} strokeWidth={2.5} />
-            {isEditMode ? 'Update Record' : 'Save & Publish'}
-          </button>
+              <button
+                type="button"
+                onClick={handleSaveDeliveryReceipt}
+                className="px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider text-white shadow-md active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90 bg-brand-orange"
+              >
+                <Save size={14} strokeWidth={2.5} />
+                <span>{isEditMode ? 'Update Record' : 'Save & Publish'}</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
-        {/* INTERACTIVE FORM SECTION */}
-        <div className={`lg:col-span-12 space-y-6 ${isPrintPreviewActive ? 'hidden' : 'block'} print:hidden`}>
+        {/* INTERACTIVE FORM SECTION (STEP 1) */}
+        <div className={`lg:col-span-12 space-y-6 ${currentStep === 1 ? 'block' : 'hidden'} print:hidden`}>
           
           {/* SECTION 1: CORE CLIENT & METADATA */}
           <div className={`p-4 rounded-xl border shadow-xs space-y-3.5 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-150'}`}>
@@ -1648,6 +1939,250 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             )}
           </div>
 
+          {/* HIDDEN FILE INPUTS FOR E-SIGNATURE UPLOAD */}
+          <input
+            type="file"
+            ref={preparedFileInputRef}
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleSignatureFileUpload(e, 'prepared')}
+          />
+          <input
+            type="file"
+            ref={deliveredFileInputRef}
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleSignatureFileUpload(e, 'delivered')}
+          />
+          <input
+            type="file"
+            ref={approvedFileInputRef}
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleSignatureFileUpload(e, 'approved')}
+          />
+          <input
+            type="file"
+            ref={checkedReceivedFileInputRef}
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleSignatureFileUpload(e, 'checkedReceived')}
+          />
+
+          {/* SECTION 3: SIGNATORIES & AUTHORIZATIONS */}
+          <div className={`p-4 rounded-xl border shadow-xs space-y-4 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-150'}`}>
+            <div className="flex items-center justify-between border-b dark:border-slate-800 pb-2">
+              <div className="flex items-center gap-2">
+                <PenTool size={16} className="text-brand-orange" />
+                <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Section 3: Signatories & Authorizations</h2>
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium italic">Configured with official defaults (Prepared & Approved), fully editable with optional e-signature uploads</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
+              
+              {/* 1. Prepared by */}
+              <div className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 ${
+                isDarkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50/80 border-slate-200'
+              }`}>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-black uppercase text-brand-orange tracking-wider">Prepared By</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-brand-orange/10 text-brand-orange">Signatory 1</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">Full Name</label>
+                      <input
+                        type="text"
+                        placeholder="Bianca Aguinaldo"
+                        value={signatoryPrepared.name}
+                        onChange={(e) => setSignatoryPrepared(prev => ({ ...prev, name: e.target.value }))}
+                        className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium focus:outline-none ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">Date</label>
+                      <input
+                        type="date"
+                        value={signatoryPrepared.date}
+                        onChange={(e) => setSignatoryPrepared(prev => ({ ...prev, date: e.target.value }))}
+                        className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium focus:outline-none ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* E-Signature Area */}
+                <div className="pt-2 border-t dark:border-slate-800">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">E-Signature</span>
+                    {signatoryPrepared.signatureImage && (
+                      <button
+                        type="button"
+                        onClick={() => setSignatoryPrepared(prev => ({ ...prev, signatureImage: undefined, type: 'typed' }))}
+                        className="text-[9px] text-rose-500 font-bold hover:underline cursor-pointer border-none bg-transparent"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+
+                  {signatoryPrepared.signatureImage ? (
+                    <div className="p-2 rounded-lg border bg-white flex items-center justify-center h-16 relative group">
+                      <img src={signatoryPrepared.signatureImage} alt="Prepared Signature" className="max-h-full max-w-full object-contain" />
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => preparedFileInputRef.current?.click()}
+                        className={`flex-1 py-1.5 px-2 rounded-lg border text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-250 text-slate-700 hover:bg-slate-100'
+                        }`}
+                        title="Upload signature image (PNG, JPG, WebP)"
+                      >
+                        <Upload size={12} className="text-brand-orange" />
+                        <span>Upload</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openSignatureModal('prepared')}
+                        className={`flex-1 py-1.5 px-2 rounded-lg border text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-250 text-slate-700 hover:bg-slate-100'
+                        }`}
+                        title="Draw signature on canvas"
+                      >
+                        <PenTool size={12} className="text-brand-orange" />
+                        <span>Draw</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 2. Delivered / Installed by */}
+              <div className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 ${
+                isDarkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50/80 border-slate-200'
+              }`}>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-black uppercase text-brand-orange tracking-wider">Delivered / Installed</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-brand-orange/10 text-brand-orange">Signatory 2</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">Full Name</label>
+                      <input
+                        type="text"
+                        placeholder="Enter staff or driver name..."
+                        value={signatoryDelivered.name}
+                        onChange={(e) => setSignatoryDelivered(prev => ({ ...prev, name: e.target.value }))}
+                        className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium focus:outline-none ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Approved by */}
+              <div className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 ${
+                isDarkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50/80 border-slate-200'
+              }`}>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-black uppercase text-brand-orange tracking-wider">Approved By</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-brand-orange/10 text-brand-orange">Signatory 3</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">Full Name</label>
+                      <input
+                        type="text"
+                        placeholder="Jerald Dela Cruz"
+                        value={signatoryApproved.name}
+                        onChange={(e) => setSignatoryApproved(prev => ({ ...prev, name: e.target.value }))}
+                        className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium focus:outline-none ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">Date</label>
+                      <input
+                        type="date"
+                        value={signatoryApproved.date}
+                        onChange={(e) => setSignatoryApproved(prev => ({ ...prev, date: e.target.value }))}
+                        className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium focus:outline-none ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* E-Signature Area */}
+                <div className="pt-2 border-t dark:border-slate-800">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">E-Signature</span>
+                    {signatoryApproved.signatureImage && (
+                      <button
+                        type="button"
+                        onClick={() => setSignatoryApproved(prev => ({ ...prev, signatureImage: undefined, type: 'typed' }))}
+                        className="text-[9px] text-rose-500 font-bold hover:underline cursor-pointer border-none bg-transparent"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+
+                  {signatoryApproved.signatureImage ? (
+                    <div className="p-2 rounded-lg border bg-white flex items-center justify-center h-16 relative group">
+                      <img src={signatoryApproved.signatureImage} alt="Approved Signature" className="max-h-full max-w-full object-contain" />
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => approvedFileInputRef.current?.click()}
+                        className={`flex-1 py-1.5 px-2 rounded-lg border text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-250 text-slate-700 hover:bg-slate-100'
+                        }`}
+                        title="Upload signature image (PNG, JPG, WebP)"
+                      >
+                        <Upload size={12} className="text-brand-orange" />
+                        <span>Upload</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openSignatureModal('approved')}
+                        className={`flex-1 py-1.5 px-2 rounded-lg border text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-250 text-slate-700 hover:bg-slate-100'
+                        }`}
+                        title="Draw signature on canvas"
+                      >
+                        <PenTool size={12} className="text-brand-orange" />
+                        <span>Draw</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+
           {/* GENERAL REMARKS */}
           <div className={`p-4 rounded-xl border shadow-xs text-left ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-150'}`}>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Additional Receipt Instructions or Dispatch notes</label>
@@ -1662,302 +2197,401 @@ export const CreateDeliveryReceiptPage: React.FC<CreateDeliveryReceiptPageProps>
             />
           </div>
 
+          {/* STEP 1 NAVIGATION FOOTER */}
+          <div className="flex items-center justify-between pt-2 border-t dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => navigate('/delivery-receipt')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Cancel & Return
+            </button>
+            <button
+              type="button"
+              onClick={handleProceedToStep2}
+              className="px-6 py-3 rounded-xl font-black text-xs uppercase tracking-wider text-white shadow-md active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90 bg-brand-orange"
+            >
+              <span>Proceed to Step 2: Print Preview & Review</span>
+              <ArrowRight size={16} strokeWidth={2.5} />
+            </button>
+          </div>
+
         </div>
 
-        {/* PRINT / PREVIEW RENDER PANEL MATCHING PHOENIX LAYOUT */}
-        <div className={`lg:col-span-12 print:block ${isPrintPreviewActive ? 'block' : 'hidden'}`}>
-          <div className="border bg-white text-zinc-900 p-8 shadow-md rounded-2xl relative select-none print:shadow-none print:border-none print:p-0 max-w-4xl mx-auto font-sans">
-            {/* Header branding logo section (Screenshot requested by user) */}
-            <div className="flex items-center justify-center mb-1 pb-1">
-              <img 
-                src="https://www.phoenix.com.ph/wp-content/uploads/2026/06/Screenshot-2026-06-04-093703.png"
-                alt="Phoenix Publishing House Logo Header"
-                className="w-full object-contain max-h-[85px]"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-
-            {/* Document title & top right date blocks */}
-            <div className="flex items-center justify-between mt-2.5">
-              <div className="w-1/4" />
-              <div className="w-2/4 text-center">
-                <h2 className="text-[14px] font-black tracking-widest text-zinc-900 uppercase font-sans">
-                  DELIVERY ACCEPTANCE
-                </h2>
+        {/* STEP 2: PRINT PREVIEW & VERIFICATION (DOCUMENT RENDER MATCHING PHOENIX LAYOUT) */}
+        <div className={`lg:col-span-12 print:block ${currentStep === 2 ? 'block' : 'hidden'}`}>
+          {/* Top Step 2 Verification Banner */}
+          <div className="mb-5 p-4 rounded-2xl border flex items-center justify-between flex-wrap gap-3 bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200 print:hidden shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-brand-orange text-white">
+                <Eye size={18} />
               </div>
-
-              {/* Box container for Date and DR No. matching paper sketch */}
-              <div className="w-1/4 flex justify-end">
-                <div className="border border-zinc-500 rounded-sm overflow-hidden shrink-0 text-center text-[10px] w-[165px] leading-tight">
-                  <div className="border-b border-zinc-500 p-1 flex items-center justify-between px-2 bg-zinc-50">
-                    <span className="font-bold text-zinc-500 uppercase">Date:</span>
-                    <span className="font-mono font-bold text-zinc-800">
-                      {dateOfAcceptance ? new Date(dateOfAcceptance).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : '--/--/----'}
-                    </span>
-                  </div>
-                  <div className="p-1 flex items-center justify-between px-2 bg-zinc-100/50">
-                    <span className="font-bold text-zinc-500 uppercase">DR No.</span>
-                    <span className="font-mono font-bold text-zinc-900 tracking-wider">
-                      {drNo || '00014-2627'}
-                    </span>
-                  </div>
-                </div>
+              <div className="text-left">
+                <p className="text-xs font-black uppercase tracking-wider text-brand-orange">Step 2: Print Preview & Document Review</p>
+                <p className="text-[11px] opacity-80 mt-0.5">Please review the delivery acceptance layout, item breakdown, and signatures below before finalizing and publishing.</p>
               </div>
             </div>
+          </div>
+          {/* Multi-Page Paginated Document Sheets for Bundles */}
+          <div className="space-y-8 print:space-y-0">
+            {printPages.map((pageGroup, pageIndex) => {
+              const isLastPage = pageIndex === printPages.length - 1;
+              const pageItems = pageGroup.items;
 
-            {/* Client information fields grid */}
-            <div className="grid grid-cols-12 gap-y-2 text-[10px] text-left mt-4 pb-4 border-b border-zinc-300">
-              
-              <div className="col-span-7 flex flex-col pr-4 justify-end">
-                <div className="flex items-end">
-                  <span className="w-24 shrink-0 font-bold text-zinc-700">Delivered to</span>
-                  <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                  <span className="font-black text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
-                    {deliveredTo || 'ST. LOUIS SCHOOL (CENTER), INC.'}
-                  </span>
-                </div>
-                {schoolMonitoringId && (
-                  <div className="flex items-end mt-1 font-mono text-[9px] text-brand-orange pl-[102px]">
-                    <span className="font-bold text-zinc-500 mr-1.5">ID:</span>
-                    <span className="font-black text-zinc-900">{schoolMonitoringId}</span>
-                  </div>
-                )}
-              </div>
-              <div className="col-span-5 flex items-end">
-                <span className="w-20 shrink-0 font-bold text-zinc-700">Client Code</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-mono font-bold text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 pl-1">
-                  {clientCode || 'C00000231(GS)'}
-                </span>
-              </div>
-
-              <div className="col-span-7 flex items-end pr-4">
-                <span className="w-24 shrink-0 font-bold text-zinc-700">Address</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-medium text-zinc-800 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
-                  {address || 'ASSUMPTION ROAD, 2600 BAGUIO CITY, BEN'}
-                </span>
-              </div>
-              <div className="col-span-5 flex items-end">
-                <span className="w-20 shrink-0 font-bold text-zinc-700">Agent</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-semibold text-zinc-850 border-b border-zinc-300 flex-grow pb-0.5 pl-1">
-                  {agent || 'Team Gina'}
-                </span>
-              </div>
-
-              <div className="col-span-7 flex items-end pr-4">
-                <span className="w-24 shrink-0 font-bold text-zinc-700">Contact Person</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-medium text-zinc-800 border-b border-zinc-350 flex-grow pb-0.5 pl-1 truncate">
-                  {contactPerson || <span className="text-zinc-300">__________________________________________</span>}
-                </span>
-              </div>
-              <div className="col-span-5 flex items-end">
-                <span className="w-20 shrink-0 font-bold text-zinc-700">Project</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-bold text-zinc-950 border-b border-zinc-300 flex-grow pb-0.5 pl-1 truncate">
-                  {project || 'ARALINKS ACE'}
-                </span>
-              </div>
-
-              <div className="col-span-7 flex items-end pr-4">
-                <span className="w-24 shrink-0 font-bold text-zinc-700">Contact No.</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-medium text-zinc-800 border-b border-zinc-300 flex-grow pb-0.5 pl-1">
-                  {contactNo || <span className="text-zinc-300">__________________________________________</span>}
-                </span>
-              </div>
-              <div className="col-span-5 flex items-end">
-                <span className="w-20 shrink-0 font-bold text-zinc-700">MOA</span>
-                <span className="font-semibold text-zinc-500 mr-1.5">:</span>
-                <span className="font-semibold text-zinc-805 border-b border-zinc-300 flex-grow pb-0.5 pl-1 truncate">
-                  {moa || 'S.Y. 2023 TO S.Y. 2024 TO S.Y. 2025-26'}
-                </span>
-              </div>
-
-            </div>
-
-            {/* HARDWARE ITEMS TABLE (Matches physical style closely) */}
-            <div className="mt-4 text-[9.5px] text-left">
-              <table className="w-full border-collapse border border-zinc-400">
-                <thead>
-                  <tr className="bg-zinc-100 text-[8.5px] font-black uppercase text-zinc-650 border-b border-zinc-400">
-                    <th className="border-r border-zinc-400 px-2.5 py-1.5 text-center w-14">Quantity</th>
-                    <th className="border-r border-zinc-400 px-2.5 py-1.5 text-center w-14">Unit</th>
-                    <th className="border-r border-zinc-400 px-3 py-1.5 text-left w-1/2">Description</th>
-                    <th className="border-r border-zinc-400 px-3 py-1.5 text-left">Specifications</th>
-                    <th className="px-3 py-1.5 text-left">Remarks</th>
-                  </tr>
-                </thead>
-                <tbody className="text-[9.5px]">
-                  {/* Category Indicator Row mimicking paper template */}
-                  <tr className="border-b border-zinc-300 font-bold text-zinc-800 bg-zinc-50/70">
-                    <td className="border-r border-zinc-300 py-1 text-center"></td>
-                    <td className="border-r border-zinc-300 py-1 text-center"></td>
-                    <td colSpan={3} className="px-3 py-1 font-black uppercase tracking-wider text-[8.5px] text-zinc-700">
-                      Hardware
-                    </td>
-                  </tr>
-
-                  {hardwareItems.map((hw, idx) => (
-                    <tr key={hw.id || idx} className="border-b border-zinc-200">
-                      <td className="border-r border-zinc-400 px-2 py-1 text-center font-bold font-mono text-zinc-900">{hw.qty}</td>
-                      <td className="border-r border-zinc-400 px-2 py-1 text-center text-zinc-600 font-sans">{hw.unit}</td>
-                      <td className="border-r border-zinc-400 px-3 py-1 font-black text-zinc-900 truncate max-w-[210px]" title={hw.description}>{hw.description || '------'}</td>
-                      <td className="border-r border-zinc-400 px-3 py-1 font-mono text-[9px] text-zinc-650 truncate max-w-[150px]" title={hw.specifications}>{hw.specifications || '------'}</td>
-                      <td className="px-3 py-1 text-zinc-600 truncate max-w-[140px]" title={hw.remarks}>{hw.remarks || '------'}</td>
-                    </tr>
-                  ))}
-                  {/* Fill empty lines up to 8 rows for that notepad look */}
-                  {Array.from({ length: Math.max(0, 8 - hardwareItems.length) }).map((_, i) => (
-                    <tr key={`empty-hw-${i}`} className="h-[21px] border-b border-zinc-200">
-                      <td className="border-r border-zinc-400"></td>
-                      <td className="border-r border-zinc-400"></td>
-                      <td className="border-r border-zinc-400"></td>
-                      <td className="border-r border-zinc-400"></td>
-                      <td></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-
-
-            {/* Document Remarks/Footnotes */}
-            {remarks && (
-              <div className="mt-3.5 p-2 rounded border border-zinc-200 text-left text-[8.5px] leading-relaxed text-zinc-500 font-sans">
-                <span className="font-extrabold text-[#FF6A00] uppercase block mb-0.5">Dispatcher / Routing Notes:</span>
-                {remarks}
-              </div>
-            )}
-
-            {/* SIGNATURE FIELDS AT THE BOTTOM (A high-fidelity 2x2 paper document signatory section) */}
-            <div className="mt-6 pt-4 border-t border-zinc-300 grid grid-cols-2 gap-x-12 gap-y-5 text-left leading-snug text-[10px]">
-              
-              {/* Row 1 Column 1: Prepared */}
-              <div className="space-y-1.5 flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] font-bold uppercase text-zinc-600 block">Prepared by/ Date:</span>
-                </div>
-                <div 
-                  onClick={() => openSignatureModal('prepared')}
-                  className="h-14 border border-dashed border-zinc-200 rounded hover:bg-zinc-50 cursor-pointer relative overflow-hidden flex items-center justify-center transition-all"
-                >
-                  {signatoryPrepared.signatureImage ? (
-                    <img src={signatoryPrepared.signatureImage} alt="Prepared Sig" className="object-contain h-full w-44 opacity-95 scale-100" />
-                  ) : signatoryPrepared.name ? (
-                    <div className="text-zinc-400 text-center font-mono opacity-50 flex items-center gap-1">
-                      <PenTool size={10} className="text-brand-orange" />
-                      <span className="text-[7.5px] font-bold uppercase">Click to Sign</span>
-                    </div>
-                  ) : (
-                    <span className="text-zinc-300 text-[9px] italic">Sign here</span>
-                  )}
-                </div>
-                <div className="text-center font-sans">
-                  <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[200px] mx-auto text-[10px] uppercase tracking-wide leading-none">{signatoryPrepared.name || 'Bianca Aguinaldo'}</span>
-                  <span className="text-[8px] text-zinc-400 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature</span>
-                </div>
-              </div>
-
-              {/* Row 1 Column 2: Delivered/Installed */}
-              <div className="space-y-1.5 flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] font-bold uppercase text-zinc-600 block">Delivered/Installed by/ Date:</span>
-                </div>
-                <div 
-                  onClick={() => openSignatureModal('delivered')}
-                  className="h-14 border border-dashed border-zinc-200 rounded hover:bg-zinc-50 cursor-pointer relative overflow-hidden flex items-center justify-center transition-all"
-                >
-                  {signatoryDelivered.signatureImage ? (
-                    <img src={signatoryDelivered.signatureImage} alt="Delivered Sig" className="object-contain h-full w-44 opacity-95 scale-100" />
-                  ) : signatoryDelivered.name ? (
-                    <div className="text-zinc-400 text-center font-mono opacity-50 flex items-center gap-1">
-                      <PenTool size={10} className="text-brand-orange" />
-                      <span className="text-[7.5px] font-bold uppercase">Click to Sign</span>
-                    </div>
-                  ) : (
-                    <span className="text-zinc-300 text-[9px] italic">Sign here</span>
-                  )}
-                </div>
-                <div className="text-center font-sans">
-                  <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[240px] mx-auto text-[10px] uppercase tracking-wide leading-none">c/o DID STAFF: {signatoryDelivered.name || 'JOHN ROBERT PAGALA'}</span>
-                  <span className="text-[8px] text-zinc-440 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature/Date</span>
-                </div>
-              </div>
-
-              {/* Row 2 Column 1: Approved */}
-              <div className="space-y-1.5 flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] font-bold uppercase text-zinc-600 block">Approved by/ Date:</span>
-                </div>
-                <div 
-                  onClick={() => openSignatureModal('approved')}
-                  className="h-14 border border-dashed border-zinc-200 rounded hover:bg-zinc-50 cursor-pointer relative overflow-hidden flex items-center justify-center transition-all"
-                >
-                  {signatoryApproved.signatureImage ? (
-                    <img src={signatoryApproved.signatureImage} alt="Approved Sig" className="object-contain h-full w-44 opacity-95 scale-100" />
-                  ) : signatoryApproved.name ? (
-                    <div className="text-zinc-400 text-center font-mono opacity-50 flex items-center gap-1">
-                      <PenTool size={10} className="text-brand-orange" />
-                      <span className="text-[7.5px] font-bold uppercase">Click to Sign</span>
-                    </div>
-                  ) : (
-                    <span className="text-zinc-300 text-[9px] italic">Sign here</span>
-                  )}
-                </div>
-                <div className="text-center font-sans">
-                  <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[200px] mx-auto text-[10px] uppercase tracking-wide leading-none">{signatoryApproved.name || 'JERALD DELA CRUZ'}</span>
-                  <span className="text-[8px] text-zinc-440 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature</span>
-                </div>
-              </div>
-
-              {/* Row 2 Column 2: Checked and Received */}
-              <div className="space-y-1.5 flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] font-bold uppercase text-zinc-650 block">CHECKED and Received the above articles in good order and condition:</span>
-                </div>
-                <div 
-                  onClick={() => openSignatureModal('checkedReceived')}
-                  className="h-14 border border-dashed border-zinc-250 rounded bg-orange-50/5 hover:bg-orange-50/15 cursor-pointer relative overflow-hidden flex items-center justify-center transition-all"
-                >
-                  {signatoryCheckedReceived.signatureImage ? (
-                    <img src={signatoryCheckedReceived.signatureImage} alt="Received Sig" className="object-contain h-full w-44 opacity-95 scale-100" />
-                  ) : signatoryCheckedReceived.name ? (
-                    <div className="text-zinc-400 text-center font-mono opacity-50 flex items-center gap-1">
-                      <PenTool size={10} className="text-brand-orange" />
-                      <span className="text-[7.5px] font-bold uppercase">Click to Sign</span>
-                    </div>
-                  ) : (
-                    <div className="text-center font-mono flex items-center justify-center gap-1">
-                      <PenTool size={10} className="text-brand-orange animate-bounce" />
-                      <span className="text-[7.5px] text-brand-orange font-bold uppercase tracking-wider">Receiver Sign</span>
+              return (
+                <div key={pageGroup.id || pageIndex} className="print:break-after-page print:page-break-after-always">
+                  {/* Page indicator in web preview mode */}
+                  {printPages.length > 1 && (
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 px-1 max-w-4xl mx-auto print:hidden">
+                      <span className="flex items-center gap-1.5 uppercase font-mono tracking-wider">
+                        <span className="px-2 py-0.5 rounded bg-brand-orange text-white text-[10px] font-black">
+                          Page {pageIndex + 1} of {printPages.length}
+                        </span>
+                        <span className="text-slate-700 dark:text-slate-200">{pageGroup.pageLabel}</span>
+                      </span>
+                      <span className="text-[11px] font-mono text-slate-400">
+                        {pageItems.length} item{pageItems.length !== 1 ? 's' : ''} on this page
+                      </span>
                     </div>
                   )}
-                </div>
-                <div className="text-center font-sans">
-                  <div className="max-w-[200px] mx-auto">
-                    <input
-                      type="text"
-                      placeholder="Enter receiver name..."
-                      value={signatoryCheckedReceived.name}
-                      onChange={(e) => setSignatoryCheckedReceived(prev => ({ ...prev, name: e.target.value }))}
-                      className="w-full text-center font-extrabold border-b border-zinc-400 focus:outline-none focus:border-brand-orange text-zinc-900 pb-0.5 leading-none text-[10px] uppercase bg-transparent"
-                    />
+
+                  <div 
+                    className={`border bg-white text-zinc-900 p-8 shadow-md rounded-2xl relative select-none print:shadow-none print:border-none print:p-0 max-w-4xl mx-auto font-sans ${
+                      !isLastPage ? 'print:break-after-page print:page-break-after-always' : ''
+                    }`}
+                    style={{ pageBreakAfter: !isLastPage ? 'always' : 'auto' }}
+                  >
+                    {/* Header branding logo section */}
+                    <div className="flex items-center justify-center mb-1 pb-1">
+                      <img 
+                        src="https://www.phoenix.com.ph/wp-content/uploads/2026/06/Screenshot-2026-06-04-093703.png"
+                        alt="Phoenix Publishing House Logo Header"
+                        className="w-full object-contain max-h-[85px]"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+
+                    {/* Document title & top right date blocks */}
+                    <div className="flex items-center justify-between mt-2.5">
+                      <div className="w-1/4" />
+                      <div className="w-2/4 text-center">
+                        <h2 className="text-[14px] font-black tracking-widest text-zinc-900 uppercase font-sans">
+                          DELIVERY ACCEPTANCE
+                        </h2>
+                      </div>
+
+                      {/* Box container for Date and DR No. matching paper sketch */}
+                      <div className="w-1/4 flex justify-end">
+                        <div className="border border-zinc-500 rounded-sm overflow-hidden shrink-0 text-center text-[10px] w-[165px] leading-tight">
+                          <div className="border-b border-zinc-500 p-1 flex items-center justify-between px-2 bg-zinc-50">
+                            <span className="font-bold text-zinc-500 uppercase">Date:</span>
+                            <span className="font-mono font-bold text-zinc-800">
+                              {dateOfAcceptance ? new Date(dateOfAcceptance).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : '--/--/----'}
+                            </span>
+                          </div>
+                          <div className="p-1 flex items-center justify-between px-2 bg-zinc-100/50">
+                            <span className="font-bold text-zinc-500 uppercase">DR No.</span>
+                            <span className="font-mono font-bold text-zinc-900 tracking-wider">
+                              {drNo || '00014-2627'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Client information fields grid */}
+                    <div className="grid grid-cols-12 gap-y-2 text-[10px] text-left mt-4 pb-4 border-b border-zinc-300">
+                      
+                      <div className="col-span-7 flex flex-col pr-4 justify-end">
+                        <div className="flex items-end">
+                          <span className="w-24 shrink-0 font-bold text-zinc-700">Delivered to</span>
+                          <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                          <span className="font-black text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
+                            {deliveredTo || 'ST. LOUIS SCHOOL (CENTER), INC.'}
+                          </span>
+                        </div>
+                        {schoolMonitoringId && (
+                          <div className="flex items-end mt-1 font-mono text-[9px] text-brand-orange pl-[102px]">
+                            <span className="font-bold text-zinc-500 mr-1.5">ID:</span>
+                            <span className="font-black text-zinc-900">{schoolMonitoringId}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-5 flex items-end">
+                        <span className="w-20 shrink-0 font-bold text-zinc-700">Client Code</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-mono font-bold text-zinc-900 border-b border-zinc-300 flex-grow pb-0.5 pl-1">
+                          {clientCode || 'C00000231(GS)'}
+                        </span>
+                      </div>
+
+                      <div className="col-span-7 flex items-end pr-4">
+                        <span className="w-24 shrink-0 font-bold text-zinc-700">Address</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-medium text-zinc-800 border-b border-zinc-300 flex-grow pb-0.5 truncate pl-1">
+                          {address || 'ASSUMPTION ROAD, 2600 BAGUIO CITY, BEN'}
+                        </span>
+                      </div>
+                      <div className="col-span-5 flex items-end">
+                        <span className="w-20 shrink-0 font-bold text-zinc-700">Agent</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-semibold text-zinc-850 border-b border-zinc-300 flex-grow pb-0.5 pl-1">
+                          {agent || 'Team Gina'}
+                        </span>
+                      </div>
+
+                      <div className="col-span-7 flex items-end pr-4">
+                        <span className="w-24 shrink-0 font-bold text-zinc-700">Contact Person</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-medium text-zinc-800 border-b border-zinc-350 flex-grow pb-0.5 pl-1 truncate">
+                          {contactPerson || <span className="text-zinc-300">__________________________________________</span>}
+                        </span>
+                      </div>
+                      <div className="col-span-5 flex items-end">
+                        <span className="w-20 shrink-0 font-bold text-zinc-700">Project</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-bold text-zinc-950 border-b border-zinc-300 flex-grow pb-0.5 pl-1 truncate">
+                          {project || 'ARALINKS ACE'}
+                        </span>
+                      </div>
+
+                      <div className="col-span-7 flex items-end pr-4">
+                        <span className="w-24 shrink-0 font-bold text-zinc-700">Contact No.</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-medium text-zinc-800 border-b border-zinc-300 flex-grow pb-0.5 pl-1">
+                          {contactNo || <span className="text-zinc-300">__________________________________________</span>}
+                        </span>
+                      </div>
+                      <div className="col-span-5 flex items-end">
+                        <span className="w-20 shrink-0 font-bold text-zinc-700">MOA</span>
+                        <span className="font-semibold text-zinc-500 mr-1.5">:</span>
+                        <span className="font-semibold text-zinc-805 border-b border-zinc-300 flex-grow pb-0.5 pl-1 truncate">
+                          {moa || 'S.Y. 2023 TO S.Y. 2024 TO S.Y. 2025-26'}
+                        </span>
+                      </div>
+
+                    </div>
+
+                    {/* HARDWARE ITEMS TABLE FOR THIS PAGE */}
+                    <div className="mt-4 text-[9.5px] text-left">
+                      <table className="w-full border-collapse border border-zinc-400">
+                        <thead>
+                          <tr className="bg-zinc-100 text-[8.5px] font-black uppercase text-zinc-650 border-b border-zinc-400">
+                            <th className="border-r border-zinc-400 px-2.5 py-1.5 text-center w-14">Quantity</th>
+                            <th className="border-r border-zinc-400 px-2.5 py-1.5 text-center w-14">Unit</th>
+                            <th className="border-r border-zinc-400 px-3 py-1.5 text-left w-1/2">Description</th>
+                            <th className="border-r border-zinc-400 px-3 py-1.5 text-left">Specifications</th>
+                            <th className="px-3 py-1.5 text-left">Remarks</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-[9.5px]">
+                          {/* Category Indicator Row */}
+                          <tr className="border-b border-zinc-300 font-bold text-zinc-800 bg-zinc-50/70">
+                            <td className="border-r border-zinc-300 py-1 text-center"></td>
+                            <td className="border-r border-zinc-300 py-1 text-center"></td>
+                            <td colSpan={3} className="px-3 py-1 font-black uppercase tracking-wider text-[8.5px] text-zinc-700">
+                              {pageGroup.categoryTitle}
+                            </td>
+                          </tr>
+
+                          {pageItems.map((hw, idx) => (
+                            <tr key={hw.id || idx} className="border-b border-zinc-200">
+                              <td className="border-r border-zinc-400 px-2 py-1 text-center font-bold font-mono text-zinc-900">{hw.qty}</td>
+                              <td className="border-r border-zinc-400 px-2 py-1 text-center text-zinc-600 font-sans">{hw.unit}</td>
+                              <td className="border-r border-zinc-400 px-3 py-1 font-black text-zinc-900 truncate max-w-[210px]" title={hw.description}>{hw.description || '------'}</td>
+                              <td className="border-r border-zinc-400 px-3 py-1 font-mono text-[9px] text-zinc-650 truncate max-w-[150px]" title={hw.specifications}>{hw.specifications || '------'}</td>
+                              <td className="px-3 py-1 text-zinc-600 truncate max-w-[140px]" title={hw.remarks}>{hw.remarks || '------'}</td>
+                            </tr>
+                          ))}
+                          {/* Fill empty lines up to 8 rows for consistent notebook layout */}
+                          {Array.from({ length: Math.max(0, 8 - pageItems.length) }).map((_, i) => (
+                            <tr key={`empty-hw-${pageIndex}-${i}`} className="h-[21px] border-b border-zinc-200">
+                              <td className="border-r border-zinc-400"></td>
+                              <td className="border-r border-zinc-400"></td>
+                              <td className="border-r border-zinc-400"></td>
+                              <td className="border-r border-zinc-400"></td>
+                              <td></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Document Remarks/Footnotes */}
+                    {remarks && (
+                      <div className="mt-3.5 p-2 rounded border border-zinc-200 text-left text-[8.5px] leading-relaxed text-zinc-500 font-sans">
+                        <span className="font-extrabold text-[#FF6A00] uppercase block mb-0.5">Dispatcher / Routing Notes:</span>
+                        {remarks}
+                      </div>
+                    )}
+
+                    {/* SIGNATURE FIELDS AT THE BOTTOM (Standard across all pages) */}
+                    <div className="mt-6 pt-4 border-t border-zinc-300 grid grid-cols-2 gap-x-12 gap-y-5 text-left leading-snug text-[10px]">
+                      
+                      {/* Row 1 Column 1: Prepared */}
+                      <div className="space-y-1.5 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-zinc-600 block">
+                            Prepared by/ Date: {signatoryPrepared.date ? new Date(signatoryPrepared.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : ''}
+                          </span>
+                        </div>
+                        <div 
+                          onClick={() => openSignatureModal('prepared')}
+                          className="h-14 border border-dashed border-zinc-200 rounded hover:bg-zinc-50 cursor-pointer relative overflow-hidden flex items-center justify-center transition-all"
+                          title="Click to sign or upload e-signature"
+                        >
+                          {signatoryPrepared.signatureImage ? (
+                            <img src={signatoryPrepared.signatureImage} alt="Prepared Sig" className="object-contain h-full w-44 opacity-95 scale-100" />
+                          ) : signatoryPrepared.name ? (
+                            <div className="text-zinc-400 text-center font-mono opacity-50 flex items-center gap-1">
+                              <PenTool size={10} className="text-brand-orange" />
+                              <span className="text-[7.5px] font-bold uppercase">Click to Sign</span>
+                            </div>
+                          ) : (
+                            <span className="text-zinc-300 text-[9px] italic">Sign here</span>
+                          )}
+                        </div>
+                        <div className="text-center font-sans">
+                          <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[200px] mx-auto text-[10px] uppercase tracking-wide leading-none min-h-[14px]">
+                            {signatoryPrepared.name || '__________________________'}
+                          </span>
+                          <span className="text-[8px] text-zinc-400 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature</span>
+                        </div>
+                      </div>
+
+                      {/* Row 1 Column 2: Delivered/Installed */}
+                      <div className="space-y-1.5 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-zinc-600 block">
+                            Delivered/Installed by:
+                          </span>
+                        </div>
+                        <div className="h-14 flex items-center justify-center">
+                          {/* Space reserved for physical signature */}
+                        </div>
+                        <div className="text-center font-sans">
+                          <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[240px] mx-auto text-[10px] uppercase tracking-wide leading-none min-h-[14px]">
+                            {signatoryDelivered.name || '__________________________'}
+                          </span>
+                          <span className="text-[8px] text-zinc-440 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature</span>
+                        </div>
+                      </div>
+
+                      {/* Row 2 Column 1: Approved */}
+                      <div className="space-y-1.5 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-zinc-600 block">
+                            Approved by/ Date: {signatoryApproved.date ? new Date(signatoryApproved.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : ''}
+                          </span>
+                        </div>
+                        <div 
+                          onClick={() => openSignatureModal('approved')}
+                          className="h-14 border border-dashed border-zinc-200 rounded hover:bg-zinc-50 cursor-pointer relative overflow-hidden flex items-center justify-center transition-all"
+                          title="Click to sign or upload e-signature"
+                        >
+                          {signatoryApproved.signatureImage ? (
+                            <img src={signatoryApproved.signatureImage} alt="Approved Sig" className="object-contain h-full w-44 opacity-95 scale-100" />
+                          ) : signatoryApproved.name ? (
+                            <div className="text-zinc-400 text-center font-mono opacity-50 flex items-center gap-1">
+                              <PenTool size={10} className="text-brand-orange" />
+                              <span className="text-[7.5px] font-bold uppercase">Click to Sign</span>
+                            </div>
+                          ) : (
+                            <span className="text-zinc-300 text-[9px] italic">Sign here</span>
+                          )}
+                        </div>
+                        <div className="text-center font-sans">
+                          <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[200px] mx-auto text-[10px] uppercase tracking-wide leading-none min-h-[14px]">
+                            {signatoryApproved.name || '__________________________'}
+                          </span>
+                          <span className="text-[8px] text-zinc-440 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature</span>
+                        </div>
+                      </div>
+
+                      {/* Row 2 Column 2: Checked and Received */}
+                      <div className="space-y-1.5 flex flex-col justify-between">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-zinc-650 block">
+                            CHECKED and Received the above articles in good order and condition:
+                          </span>
+                        </div>
+                        <div 
+                          onClick={() => openSignatureModal('checkedReceived')}
+                          className="h-14 border border-dashed border-zinc-250 rounded bg-orange-50/5 hover:bg-orange-50/15 cursor-pointer relative overflow-hidden flex items-center justify-center transition-all"
+                          title="Click to sign or upload e-signature"
+                        >
+                          {signatoryCheckedReceived.signatureImage ? (
+                            <img src={signatoryCheckedReceived.signatureImage} alt="Received Sig" className="object-contain h-full w-44 opacity-95 scale-100" />
+                          ) : signatoryCheckedReceived.name ? (
+                            <div className="text-zinc-400 text-center font-mono opacity-50 flex items-center gap-1">
+                              <PenTool size={10} className="text-brand-orange" />
+                              <span className="text-[7.5px] font-bold uppercase">Click to Sign</span>
+                            </div>
+                          ) : (
+                            <div className="text-center font-mono flex items-center justify-center gap-1">
+                              <PenTool size={10} className="text-brand-orange animate-bounce" />
+                              <span className="text-[7.5px] text-brand-orange font-bold uppercase tracking-wider">Receiver Sign</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-center font-sans">
+                          <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[200px] mx-auto text-[10px] uppercase tracking-wide leading-none min-h-[14px]">
+                            {signatoryCheckedReceived.name || '__________________________'}
+                          </span>
+                          <span className="text-[8px] text-zinc-440 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature/Date</span>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Document Footnote standard alignment with dynamic page numbering */}
+                    <div className="mt-8 border-t border-zinc-300 pt-3.5 flex items-center justify-between text-[8px] text-zinc-400 font-mono">
+                      <span>* Please fill up remarks field if necessary</span>
+                      <span className="font-bold">page {pageIndex + 1} of {printPages.length}</span>
+                      <span>cc: FPH I.T. Dept., Customer</span>
+                    </div>
                   </div>
-                  <span className="text-[8px] text-zinc-440 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature/Date</span>
                 </div>
-              </div>
+              );
+            })}
+          </div>
 
-            </div>
-
-            {/* Document Footnote standard alignment */}
-            <div className="mt-8 border-t border-zinc-300 pt-3.5 flex items-center justify-between text-[8px] text-zinc-400 font-mono">
-              <span>* Please fill up remarks field if necessary</span>
-              <span className="font-bold">page 1 of 1</span>
-              <span>cc: FPH I.T. Dept., Customer</span>
+          {/* STEP 2 BOTTOM ACTIONS (PRINT HIDDEN) */}
+          <div className="mt-6 flex items-center justify-between pt-4 border-t dark:border-slate-800 print:hidden max-w-4xl mx-auto">
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentStep(1);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-2 ${
+                isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <ArrowLeft size={14} />
+              <span>Back to Form Details</span>
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className={`px-4 py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                  isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Printer size={14} />
+                <span>Print / Save PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveDeliveryReceipt}
+                className="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-white shadow-md active:scale-95 flex items-center gap-2 cursor-pointer transition-all hover:opacity-90 bg-brand-orange"
+              >
+                <Save size={14} strokeWidth={2.5} />
+                <span>{isEditMode ? 'Update Record' : 'Save & Publish'}</span>
+              </button>
             </div>
           </div>
         </div>

@@ -1513,7 +1513,7 @@ const DeliveryReceiptManagement: React.FC<DeliveryReceiptManagementProps> = ({ i
                       </div>
                       <div className="text-center font-sans">
                         <span className="font-extrabold text-zinc-900 border-b border-zinc-400 block pb-0.5 max-w-[240px] mx-auto text-[10px] uppercase tracking-wide leading-none">
-                          C/O DID STAFF: {selectedDR.signatoryDelivered?.name || selectedDR.deliveredBy || 'JOHN ROBERT PAGALA'}
+                          {selectedDR.signatoryDelivered?.name || selectedDR.deliveredBy || 'JOHN ROBERT PAGALA'}
                         </span>
                         <span className="text-[8px] text-zinc-405 font-bold uppercase tracking-wider mt-1 block">Printed Name/Signature/Date</span>
                       </div>

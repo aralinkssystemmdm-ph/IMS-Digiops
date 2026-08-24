@@ -40,13 +40,7 @@ const SerialNumberEntryPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isRequestCancelled, setIsRequestCancelled] = useState(false);
-  const [deliveredDate, setDeliveredDate] = useState<string>(() => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  });
+  const [deliveredDate, setDeliveredDate] = useState<string>('');
 
   // Calculate Summary Stats
   const stats = useMemo(() => {
@@ -328,7 +322,7 @@ const SerialNumberEntryPage: React.FC = () => {
 
   const validate = async () => {
     if (!deliveredDate) {
-      showWarning('Missing Date', 'Date Delivered is required.');
+      showWarning('Missing Date', 'Please select the Date Delivered before submitting.');
       return false;
     }
     const allSerials: string[] = [];
@@ -389,8 +383,7 @@ const SerialNumberEntryPage: React.FC = () => {
     try {
       const currentUser = localStorage.getItem('aralinks_user') || 'System';
       const now = new Date().toISOString();
-      const timePart = now.split('T')[1] || '12:00:00.000Z';
-      const resolvedDeliveredAt = `${deliveredDate}T${timePart}`;
+      const resolvedDeliveredAt = `${deliveredDate}T12:00:00.000Z`;
 
       // 1. Process Non-Serialized Items
       for (const item of nonSerializedItems) {
@@ -657,11 +650,11 @@ const SerialNumberEntryPage: React.FC = () => {
               </button>
               <button 
                 onClick={handleSubmit}
-                disabled={isRequestCancelled || isSubmitting || totalSerialsEntered < totalSerialsNeeded || [...entries, ...nonSerializedItems].some(item => (item.quantity || item.newDeliveryQty || 0) > (item.requestedQty - item.previousReceivedQty)) || [...entries, ...nonSerializedItems].every(item => (item.quantity || item.newDeliveryQty || 0) === 0)}
+                disabled={!deliveredDate || isRequestCancelled || isSubmitting || totalSerialsEntered < totalSerialsNeeded || [...entries, ...nonSerializedItems].some(item => (item.quantity || item.newDeliveryQty || 0) > (item.requestedQty - item.previousReceivedQty)) || [...entries, ...nonSerializedItems].every(item => (item.quantity || item.newDeliveryQty || 0) === 0)}
                 className={`bg-[#FE4E02] hover:bg-[#E04502] text-white rounded-2xl font-black shadow-xl shadow-[#FE4E02]/30 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 uppercase tracking-widest ${
                   isScrolled ? 'text-xs px-5 py-2' : 'text-sm px-8 py-3.5'
                 }`}
-                title={isRequestCancelled ? "Deliveries cannot be saved for cancelled requests" : ""}
+                title={isRequestCancelled ? "Deliveries cannot be saved for cancelled requests" : !deliveredDate ? "Please select Date Delivered to complete entry" : ""}
               >
                 {isSubmitting ? <Loader2 size={isScrolled ? 16 : 20} className="animate-spin" /> : <CheckCircle2 size={isScrolled ? 16 : 20} />}
                 <span className="hidden sm:inline">Complete Entry</span>
@@ -819,9 +812,9 @@ const SerialNumberEntryPage: React.FC = () => {
                     required
                     value={deliveredDate}
                     onChange={(e) => setDeliveredDate(e.target.value)}
-                    className="w-full h-11 px-4 bg-slate-50/50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-700 dark:text-white outline-none focus:border-[#FE4E02] focus:ring-4 focus:ring-[#FE4E02]/5 transition-all"
+                    className="w-full h-11 px-4 bg-slate-50/50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-700 dark:text-white outline-none focus:border-[#FE4E02] focus:ring-4 focus:ring-[#FE4E02]/5 transition-all cursor-pointer"
                   />
-                  <p className="text-[10px] text-gray-400 font-medium px-1">Required: Enter the actual date of delivery (default is today).</p>
+                  <p className="text-[10px] text-gray-400 font-medium px-1">Required: Please select the date of delivery.</p>
                 </div>
               </div>
             </div>
