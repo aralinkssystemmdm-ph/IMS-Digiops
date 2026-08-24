@@ -8,6 +8,7 @@ import {
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { toTitleCase, getProgramBadgeClass } from '../lib/utils';
 import { useNotification } from './NotificationProvider';
+import SchoolDeleteModal from './SchoolDeleteModal';
 
 interface DesignatedHardwareItem {
   item_code: string;
@@ -320,6 +321,13 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
   const [sortField, setSortField] = useState<SortField>('school_monitoring_id');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
+  // Track existing item requests for condition check
+  const [itemRequests, setItemRequests] = useState<any[]>([]);
+
+  // Delete modal state
+  const [recordToDelete, setRecordToDelete] = useState<SchoolMonitoringRecord | null>(null);
+  const [isDeletingRecord, setIsDeletingRecord] = useState(false);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
@@ -328,6 +336,27 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
       setSortDirection(field === 'school_monitoring_id' ? 'desc' : 'asc');
     }
   };
+
+  // Check if a school monitoring record has any transaction in item_requests
+  const hasItemRequestTransaction = useCallback((record: SchoolMonitoringRecord) => {
+    if (!itemRequests || itemRequests.length === 0) return false;
+    return itemRequests.some(ir => {
+      // Exclude deleted, rejected, or cancelled requests
+      if (['Deleted', 'Rejected', 'Cancelled'].includes(ir.status) || ir.archived_at) {
+        return false;
+      }
+
+      const targetSmId = record.school_monitoring_id ? String(record.school_monitoring_id).trim().toUpperCase() : '';
+      const irSmId = ir.school_monitoring_id ? String(ir.school_monitoring_id).trim().toUpperCase() : '';
+      const matchId = Boolean(targetSmId && irSmId && targetSmId === irSmId);
+
+      const targetName = record.school_name ? String(record.school_name).trim().toLowerCase() : '';
+      const irName = ir.school_name ? String(ir.school_name).trim().toLowerCase() : '';
+      const matchName = Boolean(targetName && irName && targetName === irName);
+
+      return matchId || matchName;
+    });
+  }, [itemRequests]);
 
   // Multiplier modal states for bundle dispatch
   const [isMultiplierModalOpen, setIsMultiplierModalOpen] = useState(false);
@@ -749,9 +778,10 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
           const { data: irData } = await supabase
             .from('item_requests')
             .select('id, control_no, school_monitoring_id, date, created_at, school_name, status')
-            .not('status', 'in', '("Deleted","Rejected","Cancelled")');
+            .not('status', 'in', '("Deleted","Rejected")');
           if (irData) {
-            itemRequestsList = irData;
+            setItemRequests(irData);
+            itemRequestsList = irData.filter(ir => ir.status !== 'Cancelled');
           }
         } catch (e) {
           console.warn('Failed to fetch item requests for sync:', e);
@@ -1206,30 +1236,59 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
     automateStages(record.school_name);
   };
 
-  // Delete Action
-  const handleDeleteRecord = async (id: string, e: React.MouseEvent) => {
+  // Delete Action trigger (Opens confirmation modal)
+  const handleRequestDelete = (record: SchoolMonitoringRecord, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm('Are you sure you want to delete this monitoring record?')) {
-      const recordToDelete = records.find(r => r.id === id);
-      const newRecs = records.filter(r => r.id !== id);
-      
-      // If synced DB is configured, attempt to delete
+    if (hasItemRequestTransaction(record)) {
+      showError('Cannot Delete', 'This school monitoring record cannot be deleted because it has existing transactions in Item Requests.');
+      return;
+    }
+    setRecordToDelete(record);
+  };
+
+  // Perform permanent deletion after confirmation
+  const confirmDeleteRecord = async () => {
+    if (!recordToDelete) return;
+    setIsDeletingRecord(true);
+    const target = recordToDelete;
+
+    try {
       if (isSupabaseConfigured) {
         try {
-          const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+          const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target.id);
           if (isUUID) {
-            await supabase.from('school_monitoring').delete().eq('id', id);
-          } else if (recordToDelete && recordToDelete.customer_code) {
-            await supabase.from('school_monitoring').delete().eq('customer_code', recordToDelete.customer_code);
+            await supabase.from('school_monitoring').delete().eq('id', target.id);
+          }
+          if (target.customer_code) {
+            await supabase.from('school_monitoring').delete().eq('customer_code', target.customer_code);
+          }
+          if (target.school_monitoring_id) {
+            await supabase.from('school_monitoring').delete().eq('school_monitoring_id', target.school_monitoring_id);
           }
         } catch (err) {
           console.warn('Failed to delete from Supabase:', err);
         }
       }
-      
+
+      const newRecs = records.filter(r => 
+        r.id !== target.id && 
+        (target.customer_code ? r.customer_code !== target.customer_code : true) &&
+        (target.school_monitoring_id ? r.school_monitoring_id !== target.school_monitoring_id : true)
+      );
+
       await persistRecords(newRecs, null, true);
-      if (selectedRecordId === id) setSelectedRecordId(null);
-      showSuccess('Deleted Record', 'School monitoring record has been deleted');
+
+      if (selectedRecordId === target.id) {
+        setSelectedRecordId(null);
+      }
+
+      showSuccess('Deleted Record', `School monitoring record for "${target.school_name}" has been deleted`);
+    } catch (err) {
+      console.error('Delete failed:', err);
+      showError('Delete Failed', 'Could not delete school monitoring record');
+    } finally {
+      setIsDeletingRecord(false);
+      setRecordToDelete(null);
     }
   };
 
@@ -1989,13 +2048,16 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
                                   >
                                     <Edit3 size={13} />
                                   </button>
-                                  <button
-                                    onClick={(e) => handleDeleteRecord(record.id, e)}
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-500/15 transition-all cursor-pointer"
-                                    title="Remove and archive"
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
+                                  {!hasItemRequestTransaction(record) && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleRequestDelete(record, e)}
+                                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-500/15 transition-all cursor-pointer"
+                                      title="Delete record"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
                                 </>
                               )}
                               <button
@@ -3191,6 +3253,22 @@ export const SchoolMonitoring: React.FC<{ isDarkMode?: boolean; userRole?: strin
           <div className="py-8 text-center text-slate-400 italic">No records match current filters.</div>
         )}
       </div>
+
+      {/* School Delete Confirmation Modal */}
+      <SchoolDeleteModal
+        isOpen={!!recordToDelete}
+        onClose={() => {
+          if (!isDeletingRecord) {
+            setRecordToDelete(null);
+          }
+        }}
+        onConfirm={confirmDeleteRecord}
+        schoolName={recordToDelete?.school_name || ''}
+        monitoringId={recordToDelete?.school_monitoring_id}
+        customerCode={recordToDelete?.customer_code}
+        isDeleting={isDeletingRecord}
+        isDarkMode={isDarkMode}
+      />
 
       <style>{`
         @media print {
